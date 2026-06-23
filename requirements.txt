@@ -4,7 +4,7 @@
 
 # --- Direct dependencies ---
 playwright==1.60.0
-requests==2.33.0
+requests==2.32.5
 
 # --- Playwright runtime ---
 greenlet==3.2.4

@@ -97,11 +97,34 @@ def wait_for_input(page: Page, selectors: dict[str, str], timeout_ms: int = 9000
     )
 
 
-def _fill_via_keyboard(page: Page, text: str) -> None:
-    """Type into rich editors — avoids Trusted Types / innerHTML restrictions (Gemini, Claude, etc.)."""
+_PASTE_CHAR_THRESHOLD = 200
+
+
+def _clear_input_field(page: Page) -> None:
     page.keyboard.press("Control+a")
     page.keyboard.press("Backspace")
+
+
+def _fill_via_keyboard(page: Page, text: str) -> None:
+    """Type into rich editors — avoids Trusted Types / innerHTML restrictions (Gemini, Claude, etc.)."""
+    _clear_input_field(page)
     page.keyboard.type(text, delay=15)
+
+
+def _fill_via_paste(page: Page, text: str) -> None:
+    """Paste long prompts into rich editors — faster than typing character by character."""
+    try:
+        page.context.grant_permissions(["clipboard-read", "clipboard-write"])
+    except Exception:
+        pass
+    page.evaluate(
+        """async (text) => {
+            await navigator.clipboard.writeText(text);
+        }""",
+        text,
+    )
+    _clear_input_field(page)
+    page.keyboard.press("Control+v")
 
 
 def fill_prompt(page: Page, selectors: dict[str, str], text: str) -> Locator:
@@ -123,7 +146,10 @@ def fill_prompt(page: Page, selectors: dict[str, str], text: str) -> Locator:
         inp.dispatch_event("input")
         inp.dispatch_event("change")
     else:
-        _fill_via_keyboard(page, text)
+        if len(text) > _PASTE_CHAR_THRESHOLD:
+            _fill_via_paste(page, text)
+        else:
+            _fill_via_keyboard(page, text)
 
     return inp
 

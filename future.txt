@@ -1,0 +1,6 @@
+Muốn stream thật (gửi thay đổi message_frame về client) cần:
+Sửa message_frame — khớp cả lúc đang generate
+Sửa actions.py — trong lúc generate vẫn đọc DOM, gọi callback mỗi khi current != last_sent
+Sửa worker.py — POST partial qua endpoint mới (ví dụ /api/ai/message-chunk)
+Sửa server.py — queue chunk + SSE thật thay vì Event một lần
+Bạn muốn mình implement luồng stream thật này không?
