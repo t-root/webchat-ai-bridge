@@ -3,6 +3,8 @@
     "claude": {
       "name": "Claude",
       "model": "claude",
+      "aliases": ["claude-3", "claude-3-opus", "claude-3-sonnet"],
+      "alias_prefixes": ["claude"],
       "url": "https://claude.ai",
       "selectors": {
         "input": "[aria-label=\"Write your prompt to Claude\"]",
@@ -17,6 +19,8 @@
     "chatgpt": {
       "name": "ChatGPT",
       "model": "gpt",
+      "aliases": ["gpt-4", "gpt-4o", "gpt-4.1", "gpt-3.5-turbo", "chatgpt", "openai"],
+      "alias_prefixes": ["gpt-"],
       "url": "https://chatgpt.com",
       "selectors": {
         "input": "#prompt-textarea",
@@ -32,6 +36,7 @@
     "gemini": {
       "name": "Gemini",
       "model": "gemini",
+      "alias_prefixes": ["gemini"],
       "url": "https://gemini.google.com",
       "selectors": {
         "input": "div.ql-editor[contenteditable=\"true\"]",
@@ -47,6 +52,7 @@
     "deepseek": {
       "name": "DeepSeek",
       "model": "deepseek",
+      "alias_prefixes": ["deepseek"],
       "url": "https://chat.deepseek.com",
       "selectors": {
         "input": "textarea[placeholder*=\"Message DeepSeek\"], textarea[name=\"search\"], textarea",
@@ -62,6 +68,7 @@
     "grok": {
       "name": "Grok",
       "model": "grok",
+      "alias_prefixes": ["grok"],
       "url": "https://grok.com",
       "selectors": {
         "input": "textarea",
@@ -77,6 +84,7 @@
     "copilot": {
       "name": "Copilot",
       "model": "copilot",
+      "aliases": ["microsoft-copilot"],
       "url": "https://copilot.microsoft.com",
       "selectors": {
         "input": "#userInput",

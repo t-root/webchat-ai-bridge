@@ -271,6 +271,22 @@ Env override giá trị trong JSON khi được set:
 | `stop_button` | Nút dừng generate — bridge biết AI còn đang trả lời hay đã xong |
 | `message_frame` | Khung tin assistant — lấy phần tử **cuối cùng** khớp selector, đọc `inner_text()` |
 
+**Alias model (tùy chọn)** — khai báo trong mỗi block `models.*`, không cần sửa code:
+
+| Key | Mô tả | Ví dụ |
+|-----|--------|--------|
+| `aliases` | ID khớp chính xác | `"gpt-4"`, `"chatgpt"` |
+| `alias_prefixes` | ID bắt đầu bằng prefix | `"gpt-"` → ChatGPT |
+
+```json
+"chatgpt": {
+  "model": "gpt",
+  "aliases": ["gpt-4", "gpt-4o", "chatgpt"],
+  "alias_prefixes": ["gpt-"],
+  ...
+}
+```
+
 **Cách chọn `message_frame`:** trỏ vào phần tử chứa **text trả lời** (ví dụ `.markdown`, `.ds-markdown`). Nếu selector quá rộng (bao gồm nút Copy, Regenerate…), `inner_text()` sẽ lẫn text UI — thu hẹp selector.
 
 Nhiều selector trong một key (cách nhau bằng dấu phẩy) — thử lần lượt cho đến khi khớp (hữu ích cho đa ngôn ngữ UI).
@@ -403,7 +419,7 @@ python client_test.py
 | Thay đổi | Mô tả |
 |----------|--------|
 | **API key** | `/v1/models` và `/v1/chat/completions` yêu cầu Bearer token; mặc định `trungdeptrai` trong `client.api_key` |
-| **Model alias** | `gpt-4`, `gpt-4o`, … tự map sang `gpt` (ChatGPT); `claude-*` → Claude, v.v. |
+| **Model alias** | Khai báo `aliases` / `alias_prefixes` trong JSON — `gpt-4` → ChatGPT, v.v. |
 | **Điền prompt** | Editor rich-text luôn paste (Ctrl+V); không gõ từng ký tự |
 | **Chờ response** | Chỉ coi đang generate khi nút stop **visible**; force-complete sau 12s nếu UI còn tail |
 | **Đổi tên** | Dự án hiển thị **WebChat AI Bridge** (`webchat-ai-bridge`) |

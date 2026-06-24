@@ -17,6 +17,30 @@ def load_config() -> dict[str, Any]:
         return json.load(f)
 
 
+def _build_model_lookup(models: dict[str, Any]) -> tuple[dict[str, tuple[str, dict[str, Any]]], list[tuple[str, str, dict[str, Any]]]]:
+    """Build alias lookup tables from models section in JSON."""
+    exact: dict[str, tuple[str, dict[str, Any]]] = {}
+    prefixes: list[tuple[str, str, dict[str, Any]]] = []
+
+    for key, model in models.items():
+        entry = (key, model)
+        exact[key.lower()] = entry
+        mid = (model.get("model") or key).lower()
+        exact[mid] = entry
+
+        for alias in model.get("aliases") or []:
+            alias_key = str(alias).lower().strip()
+            if alias_key:
+                exact[alias_key] = entry
+
+        for prefix in model.get("alias_prefixes") or []:
+            prefix_key = str(prefix).lower().strip()
+            if prefix_key:
+                prefixes.append((prefix_key, key, model))
+
+    return exact, prefixes
+
+
 def get_model_by_id(model_id: str | None) -> dict[str, Any] | None:
     config = load_config()
     needle = (model_id or "").lower().strip()
@@ -24,31 +48,16 @@ def get_model_by_id(model_id: str | None) -> dict[str, Any] | None:
         return None
 
     models = config.get("models") or {}
+    exact, prefixes = _build_model_lookup(models)
 
-    def _match(resolved: str) -> dict[str, Any] | None:
-        for key, model in models.items():
-            mid = (model.get("model") or key).lower()
-            if mid == resolved or key.lower() == resolved:
-                return {"key": key, **model}
-        return None
-
-    hit = _match(needle)
+    hit = exact.get(needle)
     if hit:
-        return hit
+        key, model = hit
+        return {"key": key, **model}
 
-    # OpenAI-style ids (gpt-4, gpt-4o-mini, …) → platform id in config.
-    if needle.startswith("gpt") or needle in ("chatgpt", "openai"):
-        return _match("gpt")
-    if needle.startswith("claude"):
-        return _match("claude")
-    if needle.startswith("gemini"):
-        return _match("gemini")
-    if needle.startswith("deepseek"):
-        return _match("deepseek")
-    if needle.startswith("grok"):
-        return _match("grok")
-    if needle in ("copilot", "microsoft-copilot"):
-        return _match("copilot")
+    for prefix, key, model in prefixes:
+        if needle.startswith(prefix):
+            return {"key": key, **model}
 
     return None
 
