@@ -19,12 +19,37 @@ def load_config() -> dict[str, Any]:
 
 def get_model_by_id(model_id: str | None) -> dict[str, Any] | None:
     config = load_config()
-    needle = (model_id or "").lower()
+    needle = (model_id or "").lower().strip()
+    if not needle:
+        return None
 
-    for key, model in (config.get("models") or {}).items():
-        mid = (model.get("model") or key).lower()
-        if mid == needle:
-            return {"key": key, **model}
+    models = config.get("models") or {}
+
+    def _match(resolved: str) -> dict[str, Any] | None:
+        for key, model in models.items():
+            mid = (model.get("model") or key).lower()
+            if mid == resolved or key.lower() == resolved:
+                return {"key": key, **model}
+        return None
+
+    hit = _match(needle)
+    if hit:
+        return hit
+
+    # OpenAI-style ids (gpt-4, gpt-4o-mini, …) → platform id in config.
+    if needle.startswith("gpt") or needle in ("chatgpt", "openai"):
+        return _match("gpt")
+    if needle.startswith("claude"):
+        return _match("claude")
+    if needle.startswith("gemini"):
+        return _match("gemini")
+    if needle.startswith("deepseek"):
+        return _match("deepseek")
+    if needle.startswith("grok"):
+        return _match("grok")
+    if needle in ("copilot", "microsoft-copilot"):
+        return _match("copilot")
+
     return None
 
 
@@ -64,6 +89,8 @@ def get_client_settings() -> dict[str, Any]:
 
     temperature = float(os.environ.get("CLIENT_TEMPERATURE", client.get("temperature", 0.7)))
 
+    api_key = os.environ.get("API_KEY", client.get("api_key", "trungdeptrai")).strip()
+
     base = f"http://{host}"
     return {
         "host": host,
@@ -72,6 +99,7 @@ def get_client_settings() -> dict[str, Any]:
         "default_model": default_model,
         "temperature": temperature,
         "request_timeout": request_timeout,
+        "api_key": api_key,
         "api_base_url": f"{base}:{api_port}",
         "bridge_base_url": f"{base}:{bridge_port}",
     }

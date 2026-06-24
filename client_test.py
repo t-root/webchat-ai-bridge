@@ -15,6 +15,13 @@ def _settings() -> dict[str, Any]:
     return get_client_settings()
 
 
+def _auth_headers(cfg: dict[str, Any]) -> dict[str, str]:
+    api_key = cfg.get("api_key", "")
+    if not api_key:
+        return {}
+    return {"Authorization": f"Bearer {api_key}"}
+
+
 def call_chat_completions(
     messages: list[dict[str, str]],
     model: str | None = None,
@@ -37,14 +44,19 @@ def call_chat_completions(
     print(f"📤 Calling {url}")
     print(f"📝 Payload: {json.dumps(payload, indent=2, ensure_ascii=False)}")
 
-    response = requests.post(url, json=payload, timeout=cfg["request_timeout"])
+    response = requests.post(
+        url,
+        json=payload,
+        headers=_auth_headers(cfg),
+        timeout=cfg["request_timeout"],
+    )
     response.raise_for_status()
     return response.json()
 
 
 def health_check() -> dict[str, Any]:
     url = f"{_settings()['api_base_url']}/health"
-    response = requests.get(url, timeout=10)
+    response = requests.get(url, headers=_auth_headers(_settings()), timeout=10)
     response.raise_for_status()
     return response.json()
 

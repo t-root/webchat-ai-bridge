@@ -316,8 +316,6 @@ def _handle_request(context: BrowserContext, input_data: dict[str, Any] | str) -
     if not (message or "").strip():
         return
 
-    print(f"[Playwright] Request: model={model_id or 'auto'}, id={request_id}")
-
     resolved = get_model_by_id(model_id)
     if not resolved:
         cfg = load_config()
@@ -332,7 +330,14 @@ def _handle_request(context: BrowserContext, input_data: dict[str, Any] | str) -
                 "timestamp": datetime.now(timezone.utc).isoformat(),
             })
             return
+        print(
+            f"[Playwright] Unknown model '{model_id}' — "
+            f"falling back to {models[first_key].get('name', first_key)}"
+        )
         resolved = {"key": first_key, **models[first_key]}
+
+    platform = resolved.get("name") or resolved.get("key")
+    print(f"[Playwright] Request: model={model_id or 'auto'} → {platform}, id={request_id}")
 
     try:
         page = _get_page_for_model(context, resolved)

@@ -97,22 +97,13 @@ def wait_for_input(page: Page, selectors: dict[str, str], timeout_ms: int = 9000
     )
 
 
-_PASTE_CHAR_THRESHOLD = 200
-
-
 def _clear_input_field(page: Page) -> None:
     page.keyboard.press("Control+a")
     page.keyboard.press("Backspace")
 
 
-def _fill_via_keyboard(page: Page, text: str) -> None:
-    """Type into rich editors — avoids Trusted Types / innerHTML restrictions (Gemini, Claude, etc.)."""
-    _clear_input_field(page)
-    page.keyboard.type(text, delay=15)
-
-
 def _fill_via_paste(page: Page, text: str) -> None:
-    """Paste long prompts into rich editors — faster than typing character by character."""
+    """Paste into rich editors — avoids Trusted Types / innerHTML restrictions (Gemini, Claude, etc.)."""
     try:
         page.context.grant_permissions(["clipboard-read", "clipboard-write"])
     except Exception:
@@ -146,10 +137,7 @@ def fill_prompt(page: Page, selectors: dict[str, str], text: str) -> Locator:
         inp.dispatch_event("input")
         inp.dispatch_event("change")
     else:
-        if len(text) > _PASTE_CHAR_THRESHOLD:
-            _fill_via_paste(page, text)
-        else:
-            _fill_via_keyboard(page, text)
+        _fill_via_paste(page, text)
 
     return inp
 
@@ -175,8 +163,14 @@ def _is_generating(page: Page, selectors: dict[str, str]) -> bool:
     if not stop:
         return False
     for sel in split_selectors(stop):
-        if page.locator(sel).count() > 0:
-            return True
+        loc = page.locator(sel)
+        try:
+            count = loc.count()
+            for i in range(count):
+                if loc.nth(i).is_visible():
+                    return True
+        except Exception:
+            pass
     return False
 
 
@@ -204,6 +198,7 @@ def send_and_wait_response(page: Page, model_config: dict[str, Any], text: str) 
     rs = model_config.get("response_settings") or {}
     stability_ms = rs.get("stability_ms", 800)
     streaming_grace_ms = rs.get("streaming_grace_ms", 2500)
+    force_complete_ms = rs.get("force_complete_ms", 12000)
     max_wait_ms = rs.get("max_wait_ms", 300000)
     message_frame = resolve_message_frame(model_config)
     if not message_frame:
@@ -220,13 +215,18 @@ def send_and_wait_response(page: Page, model_config: dict[str, Any], text: str) 
 
     started = time.time() * 1000
     last_candidate = ""
-    stable_since = 0.0
-    was_generating = False
+    last_change_ms = 0.0
+    first_nonempty_ms = 0.0
+    last_log_ms = started
+    saw_generating = False
 
     while (time.time() * 1000) - started < max_wait_ms:
-        if _is_generating(page, selectors):
-            was_generating = True
-            stable_since = 0.0
+        now = time.time() * 1000
+        generating = _is_generating(page, selectors)
+
+        if generating:
+            saw_generating = True
+            last_change_ms = now
             page.wait_for_timeout(300)
             continue
 
@@ -235,19 +235,32 @@ def send_and_wait_response(page: Page, model_config: dict[str, Any], text: str) 
             page.wait_for_timeout(300)
             continue
 
-        if was_generating:
-            was_generating = False
-            last_candidate = current
-            stable_since = time.time() * 1000
-        elif (time.time() * 1000) - started < streaming_grace_ms:
-            page.wait_for_timeout(300)
-            continue
-
         if current != last_candidate:
             last_candidate = current
-            stable_since = time.time() * 1000
-        elif stable_since and (time.time() * 1000) - stable_since >= stability_ms:
-            return current
+            last_change_ms = now
+            if not first_nonempty_ms:
+                first_nonempty_ms = now
+
+        idle_ms = now - last_change_ms
+        grace = 0 if saw_generating else streaming_grace_ms
+        if idle_ms >= grace + stability_ms:
+            return last_candidate
+
+        if (
+            last_candidate
+            and first_nonempty_ms
+            and (now - first_nonempty_ms) >= force_complete_ms
+            and idle_ms >= 300
+        ):
+            print("[Playwright] Force-completing response after UI tail updates")
+            return last_candidate
+
+        if now - last_log_ms >= 30000:
+            print(
+                f"[Playwright] Waiting for stable response "
+                f"({int(idle_ms)}ms idle, {len(last_candidate)} chars)..."
+            )
+            last_log_ms = now
 
         page.wait_for_timeout(200)
 

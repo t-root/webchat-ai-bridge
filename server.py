@@ -83,6 +83,25 @@ def _format_wait_label(seconds: float | None) -> str:
 
 BRIDGE_WAIT_SECONDS, API_BRIDGE_TIMEOUT = load_timeout_settings()
 
+
+def load_api_key() -> str:
+    """API key for public OpenAI-compatible endpoints; env API_KEY overrides JSON."""
+    default = "trungdeptrai"
+    try:
+        config_path = os.path.join(os.path.dirname(__file__), "ai_models_config.json")
+        with open(config_path, "r", encoding="utf-8") as f:
+            config = json.load(f)
+        client = config.get("client") or {}
+        key = client.get("api_key")
+        if isinstance(key, str) and key.strip():
+            default = key.strip()
+    except Exception:
+        pass
+    return os.environ.get("API_KEY", default).strip()
+
+
+API_KEY = load_api_key()
+
 # Store messages from extension / terminal
 messages = []
 response_queue: Queue = Queue()
@@ -122,6 +141,38 @@ def write_json(handler: BaseHTTPRequestHandler, status_code: int, payload: dict,
             handler.send_header(k, str(v))
     handler.end_headers()
     handler.wfile.write(json_dumps(payload).encode("utf-8"))
+
+
+def extract_api_key(handler: BaseHTTPRequestHandler) -> str | None:
+    """Read API key from Authorization Bearer or api-key / x-api-key headers."""
+    auth = handler.headers.get("Authorization", "")
+    if auth.lower().startswith("bearer "):
+        return auth[7:].strip()
+    for header in ("api-key", "x-api-key"):
+        value = handler.headers.get(header)
+        if value:
+            return value.strip()
+    return None
+
+
+def require_api_key(handler: BaseHTTPRequestHandler) -> bool:
+    """Return False and send 401 if the request API key is missing or invalid."""
+    token = extract_api_key(handler)
+    if token and token == API_KEY:
+        return True
+    write_json(
+        handler,
+        401,
+        {
+            "error": {
+                "message": "Incorrect API key provided",
+                "type": "invalid_request_error",
+                "param": None,
+                "code": "invalid_api_key",
+            }
+        },
+    )
+    return False
 
 
 def sanitize_text(value) -> str:
@@ -430,6 +481,8 @@ class APIHandler(BaseHTTPRequestHandler):
             return
 
         if path == "/v1/models":
+            if not require_api_key(self):
+                return
             models_data = []
             try:
                 config_path = os.path.join(os.path.dirname(__file__), "ai_models_config.json")
@@ -452,6 +505,8 @@ class APIHandler(BaseHTTPRequestHandler):
         path = urlparse(self.path).path
 
         if path == "/v1/chat/completions":
+            if not require_api_key(self):
+                return
             self.handle_openai_chat_completions()
             return
 
@@ -705,6 +760,7 @@ def run_server(port_extension: int = PORT_EXTENSION, port_api: int = PORT_API):
         print(f"{Colors.YELLOW}  ↪ Upstream proxy: disabled{Colors.RESET}", flush=True)
     print(f"{Colors.YELLOW}  ⏱ Bridge wait: {_format_wait_label(BRIDGE_WAIT_SECONDS)}{Colors.RESET}", flush=True)
     print(f"{Colors.YELLOW}  ⏱ API→Bridge timeout: {_format_wait_label(API_BRIDGE_TIMEOUT)}{Colors.RESET}", flush=True)
+    print(f"{Colors.YELLOW}  🔑 API key: required (Bearer token on /v1/*){Colors.RESET}", flush=True)
     print(f"{Colors.BOLD}{Colors.YELLOW}{'=' * 58}{Colors.RESET}", flush=True)
     print(f"\n{Colors.BOLD}🚀 Server running. Use client_test.py to call the API.{Colors.RESET}\n", flush=True)
 

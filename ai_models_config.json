@@ -110,6 +110,7 @@
     "bridge_port": 3000,
     "default_model": "gpt",
     "temperature": 0.7,
-    "request_timeout": null
+    "request_timeout": null,
+    "api_key": "trungdeptrai"
   }
 }
