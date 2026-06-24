@@ -2,5 +2,4 @@ browser-profile/
 src/node_modules/
 __pycache__/
 *.pyc
-.env
-new.txt
+.env 
