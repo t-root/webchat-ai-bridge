@@ -17,7 +17,14 @@ import requests
 from playwright.sync_api import BrowserContext, Page, Playwright, sync_playwright
 
 from .actions import send_and_wait_response, wait_for_input
-from .config import PROJECT_ROOT, get_model_by_id, load_config
+from .config import (
+    PROJECT_ROOT,
+    get_model_by_id,
+    get_retry_settings,
+    is_auto_model,
+    load_config,
+    pick_random_model,
+)
 from .setup import ensure_chromium_installed
 
 SERVER_URL = os.environ.get("BRIDGE_SERVER_URL", "http://127.0.0.1:3000").rstrip("/")
@@ -182,6 +189,14 @@ def _release_profile_lock(profile_path: str, force_kill: bool = False) -> None:
     time.sleep(1)
 
 
+_browser_hidden = False
+
+
+def configure_browser(*, hidden: bool = False) -> None:
+    global _browser_hidden
+    _browser_hidden = hidden
+
+
 def _launch_browser(pw: Playwright) -> BrowserContext:
     config = load_config()
     browser_cfg = config.get("browser") or {}
@@ -194,8 +209,13 @@ def _launch_browser(pw: Playwright) -> BrowserContext:
     _release_profile_lock(profile_path, force_kill=False)
 
     channel = (browser_cfg.get("channel") or "").strip()
+    headless = _browser_hidden
+    if headless:
+        print("[Playwright] Browser mode: hidden (headless)")
+    else:
+        print("[Playwright] Browser mode: visible")
     launch_kwargs: dict[str, Any] = {
-        "headless": browser_cfg.get("headless") is True,
+        "headless": headless,
         "viewport": None,
         "args": [
             "--disable-blink-features=AutomationControlled",
@@ -303,6 +323,108 @@ def _get_page_for_model(context: BrowserContext, model_config: dict[str, Any]) -
     return page
 
 
+def _reload_page_for_model(context: BrowserContext, model_config: dict[str, Any]) -> Page:
+    """Reload model page from scratch — clears stuck UI / in-progress generation."""
+    key = model_config["key"]
+    url = model_config["url"]
+    config = load_config()
+    browser_cfg = config.get("browser") or {}
+    page_load_timeout = browser_cfg.get("page_load_timeout_ms", 60000)
+    wait_ms = browser_cfg.get("wait_for_input_ms", 90000)
+    selectors = model_config.get("selectors") or {}
+    platform = model_config.get("name") or key
+
+    page = _pages.get(key)
+    if page and not page.is_closed():
+        print(f"[Playwright] Reloading {platform} page (retry after timeout)...")
+        try:
+            page.goto(url, wait_until="domcontentloaded", timeout=page_load_timeout)
+            page.bring_to_front()
+            wait_for_input(page, selectors, wait_ms)
+            _pages[key] = page
+            return page
+        except Exception as exc:
+            print(f"[Playwright] Reload failed ({exc}) — opening fresh tab")
+            _pages.pop(key, None)
+            try:
+                page.close()
+            except Exception:
+                pass
+
+    _pages.pop(key, None)
+    return _get_page_for_model(context, model_config)
+
+
+def _resolve_model_for_request(model_id: str | None) -> dict[str, Any] | None:
+    if is_auto_model(model_id):
+        picked = pick_random_model()
+        if picked:
+            platform = picked.get("name") or picked.get("key")
+            print(f"[Playwright] Auto model → randomly selected {platform}")
+        return picked
+
+    resolved = get_model_by_id(model_id)
+    if resolved:
+        return resolved
+
+    cfg = load_config()
+    models = cfg.get("models") or {}
+    first_key = next(iter(models), None)
+    if not first_key:
+        return None
+    print(
+        f"[Playwright] Unknown model '{model_id}' — "
+        f"falling back to {models[first_key].get('name', first_key)}"
+    )
+    return {"key": first_key, **models[first_key]}
+
+
+def _send_with_retry(
+    context: BrowserContext,
+    model_config: dict[str, Any],
+    message: str,
+) -> str:
+    retry = get_retry_settings()
+    max_attempts = retry["max_attempts"]
+    reload_on_failure = retry["reload_on_failure"]
+    platform = model_config.get("name") or model_config.get("key")
+    last_err: Exception | None = None
+
+    for attempt in range(1, max_attempts + 1):
+        try:
+            if attempt > 1 and reload_on_failure:
+                page = _reload_page_for_model(context, model_config)
+            else:
+                page = _get_page_for_model(context, model_config)
+
+            response = send_and_wait_response(page, model_config, message)
+            if (response or "").strip():
+                return response
+            raise TimeoutError("Response timeout (empty result)")
+        except TimeoutError as err:
+            last_err = err
+            if attempt < max_attempts and reload_on_failure:
+                print(
+                    f"[Playwright] {platform} timeout on attempt {attempt}/{max_attempts} "
+                    f"— will reload and retry"
+                )
+                continue
+            raise
+        except Exception as err:
+            last_err = err
+            if attempt < max_attempts and reload_on_failure:
+                print(
+                    f"[Playwright] {platform} error on attempt {attempt}/{max_attempts}: {err} "
+                    f"— will reload and retry"
+                )
+                continue
+            raise
+
+    if last_err:
+        raise last_err
+    raise TimeoutError("Response timeout")
+
+
 def _handle_request(context: BrowserContext, input_data: dict[str, Any] | str) -> None:
     if isinstance(input_data, str):
         message = input_data
@@ -316,32 +438,23 @@ def _handle_request(context: BrowserContext, input_data: dict[str, Any] | str) -
     if not (message or "").strip():
         return
 
-    resolved = get_model_by_id(model_id)
+    resolved = _resolve_model_for_request(model_id)
     if not resolved:
-        cfg = load_config()
-        models = cfg.get("models") or {}
-        first_key = next(iter(models), None)
-        if not first_key:
-            print("[Playwright] No model configured")
-            _post_message({
-                "role": "assistant",
-                "content": "Error: no AI model configured in ai_models_config.json",
-                "request_id": request_id,
-                "timestamp": datetime.now(timezone.utc).isoformat(),
-            })
-            return
-        print(
-            f"[Playwright] Unknown model '{model_id}' — "
-            f"falling back to {models[first_key].get('name', first_key)}"
-        )
-        resolved = {"key": first_key, **models[first_key]}
+        print("[Playwright] No model configured")
+        _post_message({
+            "role": "assistant",
+            "content": "Error: no AI model configured in ai_models_config.json",
+            "request_id": request_id,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+        })
+        return
 
     platform = resolved.get("name") or resolved.get("key")
-    print(f"[Playwright] Request: model={model_id or 'auto'} → {platform}, id={request_id}")
+    auto_label = " (auto)" if is_auto_model(model_id) else ""
+    print(f"[Playwright] Request: model={model_id or 'default'}{auto_label} → {platform}, id={request_id}")
 
     try:
-        page = _get_page_for_model(context, resolved)
-        response = send_and_wait_response(page, resolved, message.strip())
+        response = _send_with_retry(context, resolved, message.strip())
         _post_message({
             "role": "assistant",
             "content": response,

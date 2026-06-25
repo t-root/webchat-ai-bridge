@@ -8,6 +8,7 @@ from urllib.request import Request, urlopen
 from urllib.error import HTTPError, URLError
 from datetime import datetime
 from decimal import Decimal
+import argparse
 import json
 import os
 import sys
@@ -328,6 +329,11 @@ class BridgeHandler(BaseHTTPRequestHandler):
                             "model": platform_config.get("model", platform_key),
                             "url": platform_config.get("url"),
                         }
+                    models_info["auto"] = {
+                        "name": "Auto",
+                        "model": "auto",
+                        "url": None,
+                    }
                     write_json(self, 200, {
                         "models": models_info,
                         "status": "ok"
@@ -494,6 +500,7 @@ class APIHandler(BaseHTTPRequestHandler):
                         "object": "model",
                         "owned_by": "local",
                     })
+                models_data.append({"id": "auto", "object": "model", "owned_by": "local"})
             except Exception:
                 models_data = [{"id": MODEL_ID, "object": "model", "owned_by": "local"}]
             write_json(self, 200, {"object": "list", "data": models_data})
@@ -674,13 +681,42 @@ class APIHandler(BaseHTTPRequestHandler):
 
 
 
-def start_playwright_bridge() -> threading.Thread | None:
+def parse_cli_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="Local OpenAI-compatible API server (Playwright bridge)",
+    )
+    parser.add_argument(
+        "--hidden",
+        action="store_true",
+        help="Hide browser window (headless); skips the interactive prompt",
+    )
+    return parser.parse_args()
+
+
+def resolve_browser_hidden(*, cli_hidden: bool) -> bool:
+    """Use --hidden when set; otherwise ask once at startup (default: visible)."""
+    if cli_hidden:
+        return True
+
+    try:
+        answer = input(
+            "Do you want to hide the browser? Press y to agree, any other key for no: "
+        ).strip().lower()
+    except (EOFError, KeyboardInterrupt):
+        print()
+        raise
+
+    return answer == "y"
+
+
+def start_playwright_bridge(*, hidden: bool = False) -> threading.Thread | None:
     """Start Playwright bridge (bridge/worker.py) unless AUTO_START_BRIDGE=0."""
     if os.environ.get("AUTO_START_BRIDGE", "1").strip() in ("0", "false", "no"):
         return None
 
     try:
         from bridge import run_bridge_loop, wait_browser_ready
+        from bridge.worker import configure_browser
     except ImportError as exc:
         print(
             f"{Colors.YELLOW}⚠ Playwright bridge import failed: {exc}{Colors.RESET}",
@@ -692,6 +728,7 @@ def start_playwright_bridge() -> threading.Thread | None:
         )
         return None
 
+    configure_browser(hidden=hidden)
     os.environ.setdefault("BRIDGE_SERVER_URL", f"http://{SERVER_HOST}:{PORT_EXTENSION}")
 
     def _run_bridge():
@@ -701,11 +738,13 @@ def start_playwright_bridge() -> threading.Thread | None:
             print(f"{Colors.YELLOW}⚠ Playwright bridge stopped: {exc}{Colors.RESET}", flush=True)
 
     def _notify_when_ready(worker: threading.Thread) -> None:
+        ready_msg = (
+            "Playwright bridge ready — browser hidden (headless)"
+            if hidden
+            else "Playwright bridge ready — browser window open"
+        )
         if wait_browser_ready(timeout=120):
-            print(
-                f"{Colors.GREEN}✓ Playwright bridge ready — browser window open{Colors.RESET}",
-                flush=True,
-            )
+            print(f"{Colors.GREEN}✓ {ready_msg}{Colors.RESET}", flush=True)
         elif worker.is_alive():
             print(
                 f"{Colors.YELLOW}⚠ Browser chưa sẵn sàng sau 120s — bridge vẫn đang thử...{Colors.RESET}",
@@ -734,7 +773,12 @@ def start_playwright_bridge() -> threading.Thread | None:
     return thread
 
 
-def run_server(port_extension: int = PORT_EXTENSION, port_api: int = PORT_API):
+def run_server(
+    port_extension: int = PORT_EXTENSION,
+    port_api: int = PORT_API,
+    *,
+    hidden: bool = False,
+):
     """Start bridge + API servers and optional Playwright worker."""
     bridge_server = ThreadingHTTPServer((SERVER_HOST, port_extension), BridgeHandler)
     api_server = ThreadingHTTPServer((SERVER_HOST, port_api), APIHandler)
@@ -744,7 +788,7 @@ def run_server(port_extension: int = PORT_EXTENSION, port_api: int = PORT_API):
     bridge_thread.start()
     api_thread.start()
 
-    playwright_thread = start_playwright_bridge()
+    playwright_thread = start_playwright_bridge(hidden=hidden)
 
     print(f"\n{Colors.BOLD}{Colors.YELLOW}{'=' * 58}{Colors.RESET}", flush=True)
     print(f"{Colors.BOLD}  Local OpenAI-Compatible API Server (Playwright){Colors.RESET}", flush=True)
@@ -760,6 +804,8 @@ def run_server(port_extension: int = PORT_EXTENSION, port_api: int = PORT_API):
         print(f"{Colors.YELLOW}  ↪ Upstream proxy: disabled{Colors.RESET}", flush=True)
     print(f"{Colors.YELLOW}  ⏱ Bridge wait: {_format_wait_label(BRIDGE_WAIT_SECONDS)}{Colors.RESET}", flush=True)
     print(f"{Colors.YELLOW}  ⏱ API→Bridge timeout: {_format_wait_label(API_BRIDGE_TIMEOUT)}{Colors.RESET}", flush=True)
+    browser_label = "hidden (headless)" if hidden else "visible"
+    print(f"{Colors.YELLOW}  Browser: {browser_label}{Colors.RESET}", flush=True)
     print(f"{Colors.YELLOW}  🔑 API key: required (Bearer token on /v1/*){Colors.RESET}", flush=True)
     print(f"{Colors.BOLD}{Colors.YELLOW}{'=' * 58}{Colors.RESET}", flush=True)
     print(f"\n{Colors.BOLD}🚀 Server running. Use client_test.py to call the API.{Colors.RESET}\n", flush=True)
@@ -782,4 +828,6 @@ def run_server(port_extension: int = PORT_EXTENSION, port_api: int = PORT_API):
 
 
 if __name__ == "__main__":
-    run_server()
+    cli_args = parse_cli_args()
+    hidden = resolve_browser_hidden(cli_hidden=cli_args.hidden)
+    run_server(hidden=hidden)

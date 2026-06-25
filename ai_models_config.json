@@ -112,6 +112,10 @@
     "bridge_wait_seconds": 0,
     "api_call_timeout_seconds": 0
   },
+  "retry": {
+    "max_attempts": 2,
+    "reload_on_failure": true
+  },
   "client": {
     "host": "127.0.0.1",
     "api_port": 5000,

@@ -4,11 +4,14 @@ from __future__ import annotations
 
 import json
 import os
+import random
 from functools import lru_cache
 from typing import Any
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CONFIG_PATH = os.path.join(PROJECT_ROOT, "ai_models_config.json")
+
+AUTO_MODEL_IDS = frozenset({"auto", "random"})
 
 
 @lru_cache(maxsize=1)
@@ -39,6 +42,35 @@ def _build_model_lookup(models: dict[str, Any]) -> tuple[dict[str, tuple[str, di
                 prefixes.append((prefix_key, key, model))
 
     return exact, prefixes
+
+
+def is_auto_model(model_id: str | None) -> bool:
+    return (model_id or "").lower().strip() in AUTO_MODEL_IDS
+
+
+def pick_random_model(exclude_keys: set[str] | None = None) -> dict[str, Any] | None:
+    """Pick a random configured model (for model=auto requests)."""
+    config = load_config()
+    models = config.get("models") or {}
+    excluded = exclude_keys or set()
+    candidates = [
+        (key, model)
+        for key, model in models.items()
+        if key not in excluded
+    ]
+    if not candidates:
+        return None
+    key, model = random.choice(candidates)
+    return {"key": key, **model}
+
+
+def get_retry_settings() -> dict[str, Any]:
+    config = load_config()
+    retry = config.get("retry") or {}
+    return {
+        "max_attempts": max(1, int(retry.get("max_attempts", 2))),
+        "reload_on_failure": retry.get("reload_on_failure", True) is not False,
+    }
 
 
 def get_model_by_id(model_id: str | None) -> dict[str, Any] | None:
