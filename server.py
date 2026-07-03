@@ -215,6 +215,61 @@ def extract_last_user_message(messages_list) -> str | None:
     return None
 
 
+def flatten_chat_message_content(content) -> str:
+    if content is None:
+        return ""
+    if isinstance(content, str):
+        return content
+    if isinstance(content, (int, float, bool, Decimal)):
+        return str(content)
+    if isinstance(content, dict):
+        # Handle multimodal / structured content objects
+        if content.get("type") == "text":
+            return str(content.get("text", ""))
+        if content.get("content") is not None:
+            return flatten_chat_message_content(content.get("content"))
+        return json.dumps(content, ensure_ascii=False)
+    if isinstance(content, list):
+        parts = []
+        for item in content:
+            item_text = flatten_chat_message_content(item)
+            if item_text:
+                parts.append(item_text)
+        return "\n".join(parts)
+    return str(content)
+
+
+def build_chat_prompt_from_messages(messages_list) -> str:
+    """Combine a chat messages list into one prompt string for the bridge.
+
+    This simulates a real chat API by preserving role labels and sending a
+    single combined context payload to the browser bridge.
+    """
+    if not isinstance(messages_list, list):
+        return ""
+
+    parts = []
+    for msg in messages_list:
+        if not isinstance(msg, dict):
+            continue
+
+        role = str(msg.get("role", "")).strip().lower()
+        text = flatten_chat_message_content(msg.get("content", "")).strip()
+        if not text:
+            continue
+
+        if role == "system":
+            parts.append(f"[SYSTEM]\n{text}")
+        elif role == "user":
+            parts.append(f"[USER]\n{text}")
+        elif role == "assistant":
+            parts.append(f"[ASSISTANT]\n{text}")
+        else:
+            parts.append(f"[{role.upper()}]\n{text}")
+
+    return "\n\n".join(parts)
+
+
 def build_chat_completion_response(model: str, content: str, request_id: str | None = None, extra: dict | None = None) -> dict:
     """Build a valid OpenAI Chat Completions response."""
     resp = {
@@ -601,22 +656,23 @@ class APIHandler(BaseHTTPRequestHandler):
                     return f"Error from upstream service ({status}): {err}"
             return "Upstream service returned an unrecognized response format."
 
-        # 2) Bridge mode: Send request to Port 3000, get raw text response back
-        user_message = extract_last_user_message(messages_list) or ""
-        if user_message:
+        # 2) Bridge mode: Send request to Port 3000, get raw text response back.
+        # Build a single combined prompt from all messages with role labels.
+        prompt_text = build_chat_prompt_from_messages(messages_list)
+        if prompt_text:
             request_id = str(uuid.uuid4())
             response_event = threading.Event()
             pending_api_requests[request_id] = response_event
             api_responses[request_id] = None
 
             # Send request to Port 3000 bridge
-            print(f"{Colors.YELLOW}📡 [API → Bridge] Sending message to Port 3000...{Colors.RESET}", flush=True)
+            print(f"{Colors.YELLOW}📡 [API → Bridge] Sending combined context to Port 3000...{Colors.RESET}", flush=True)
             print(f"{Colors.YELLOW}   Request ID: {request_id}{Colors.RESET}", flush=True)
-            print(f"{Colors.YELLOW}   Message: {user_message}{Colors.RESET}", flush=True)
-            
+            print(f"{Colors.YELLOW}   Context:\n{prompt_text}{Colors.RESET}", flush=True)
+
             preferred_model = sanitize_text(data.get("model") or MODEL_ID)
-            bridge_response = self._send_to_bridge(user_message, request_id, model=preferred_model)
-            
+            bridge_response = self._send_to_bridge(prompt_text, request_id, model=preferred_model)
+
             if bridge_response:
                 cleaned = sanitize_text(bridge_response).strip()
                 # Clean up "json\n" prefix if present
@@ -624,11 +680,11 @@ class APIHandler(BaseHTTPRequestHandler):
                     cleaned = cleaned[4:].lstrip()
                 print(f"{Colors.GREEN}✓ [Bridge] Received model response{Colors.RESET}", flush=True)
                 return cleaned
-            
+
             # Fallback if bridge doesn't respond
             pending_api_requests.pop(request_id, None)
             api_responses.pop(request_id, None)
-            echo_response = f"[Fallback] You asked: {user_message}"
+            echo_response = f"[Fallback] You asked: {prompt_text}"
             print(f"{Colors.GREEN}🔄 [Bridge Timeout] Returning fallback response{Colors.RESET}", flush=True)
             return echo_response
 

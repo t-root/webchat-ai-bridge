@@ -71,7 +71,7 @@ Dự án **100% Python** — server API + Playwright bridge. Playwright tự đ�
 **Luồng hoạt động:**
 
 1. App gọi `POST http://127.0.0.1:5000/v1/chat/completions` với `messages` và `model`.
-2. API server chuyển tin sang Bridge (port 3000).
+2. API server gom toàn bộ `messages` theo role (`system`, `user`, `assistant`) thành một context duy nhất, rồi chuyển tin sang Bridge (port 3000).
 3. Playwright bridge poll `/api/ai/user-input`, mở tab AI tương ứng.
 4. Action chung: điền prompt → bấm gửi → chờ nút stop biến mất → lấy phần tử **cuối cùng** khớp `message_frame` → `inner_text()`.
 5. Phản hồi POST về Bridge → API trả JSON OpenAI-compatible.
@@ -165,10 +165,13 @@ curl -X POST http://127.0.0.1:5000/v1/chat/completions \
   -d '{
     "model": "claude",
     "messages": [
+      {"role": "system", "content": "You are a helpful assistant."},
       {"role": "user", "content": "Xin chào!"}
     ]
   }'
 ```
+
+`/v1/chat/completions` giờ hỗ trợ đầy đủ `messages` với role `system`, `user`, `assistant`. Server sẽ ghép các role này thành một context duy nhất trước khi gửi prompt tới bridge.
 
 **API key** (mặc định trong `client.api_key`):
 
