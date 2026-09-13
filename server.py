@@ -118,6 +118,11 @@ def json_dumps(data) -> str:
     return json.dumps(data, ensure_ascii=False, separators=(",", ":"), default=str)
 
 
+def json_dumps_pretty(data) -> str:
+    """Serialize JSON for readable terminal output."""
+    return json.dumps(data, ensure_ascii=False, indent=2, default=str)
+
+
 def read_json_body(handler: BaseHTTPRequestHandler) -> dict:
     """Read and parse request JSON body."""
     content_length = int(handler.headers.get("Content-Length", "0") or "0")
@@ -432,7 +437,7 @@ class BridgeHandler(BaseHTTPRequestHandler):
             if role == "user":
                 print(f"{Colors.CYAN}👤 [USER]{Colors.RESET} {content}", flush=True)
             elif role == "assistant":
-                print(f"\n{Colors.GREEN}🤖 [MODEL RESPONSE]{Colors.RESET}", flush=True)
+                print(f"\n{Colors.GREEN}🤖 [BRIDGE RAW RESPONSE]{Colors.RESET}", flush=True)
                 print(content, flush=True)
                 print(f"{Colors.YELLOW}{'-' * 50}{Colors.RESET}", flush=True)
             else:
@@ -595,6 +600,10 @@ class APIHandler(BaseHTTPRequestHandler):
 
         response_text = self._generate_assistant_response(messages_list, data)
         completion_response = build_chat_completion_response(model, response_text)
+        print(
+            f"{Colors.GREEN}[API RESPONSE]\n{json_dumps_pretty(completion_response)}{Colors.RESET}",
+            flush=True,
+        )
         write_json(self, 200, completion_response)
 
     def _handle_chat_stream(self, model: str, messages_list, data: dict):
@@ -610,11 +619,16 @@ class APIHandler(BaseHTTPRequestHandler):
         self.end_headers()
 
         chunk = build_chat_completion_chunk(model, response_text, request_id=request_id, final=False)
-        self.wfile.write(f"data: {json_dumps(chunk)}\n\n".encode("utf-8"))
+        chunk_line = f"data: {json_dumps(chunk)}"
+        print(f"{Colors.GREEN}[API RESPONSE] {chunk_line}{Colors.RESET}", flush=True)
+        self.wfile.write(f"{chunk_line}\n\n".encode("utf-8"))
         self.wfile.flush()
 
         final_chunk = build_chat_completion_chunk(model, "", request_id=request_id, final=True)
-        self.wfile.write(f"data: {json_dumps(final_chunk)}\n\n".encode("utf-8"))
+        final_chunk_line = f"data: {json_dumps(final_chunk)}"
+        print(f"{Colors.GREEN}[API RESPONSE] {final_chunk_line}{Colors.RESET}", flush=True)
+        print(f"{Colors.GREEN}[API RESPONSE] data: [DONE]{Colors.RESET}", flush=True)
+        self.wfile.write(f"{final_chunk_line}\n\n".encode("utf-8"))
         self.wfile.write(b"data: [DONE]\n\n")
         self.wfile.flush()
 
