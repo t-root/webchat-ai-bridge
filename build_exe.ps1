@@ -8,6 +8,7 @@ Set-Location $PSScriptRoot
 py -3.13 -m PyInstaller --noconfirm --clean --onefile --console `
     --name server `
     --collect-all playwright `
+    --add-data "ai_models_config.json;." `
     --hidden-import bridge `
     --hidden-import bridge.worker `
     --hidden-import bridge.actions `
@@ -16,7 +17,5 @@ py -3.13 -m PyInstaller --noconfirm --clean --onefile --console `
     server.py
 if ($LASTEXITCODE -ne 0) { throw "PyInstaller failed ($LASTEXITCODE)" }
 
-# The exe reads its config from its own folder — ship an editable copy next to it.
-Copy-Item ai_models_config.json dist\ -Force
-
-Write-Host "Built dist\server.exe (config: dist\ai_models_config.json)"
+# The exe carries ai_models_config.json and writes it next to itself on first run if missing.
+Write-Host "Built dist\server.exe"

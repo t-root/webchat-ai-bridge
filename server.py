@@ -11,6 +11,7 @@ from decimal import Decimal
 import argparse
 import json
 import os
+import shutil
 import sys
 import threading
 import time
@@ -32,6 +33,19 @@ if getattr(sys, "frozen", False):
 else:
     APP_DIR = os.path.dirname(os.path.abspath(__file__))
 CONFIG_PATH = os.path.join(APP_DIR, "ai_models_config.json")
+
+
+def ensure_config_file() -> None:
+    """Exe shipped alone: write the bundled default config next to it on first run."""
+    if os.path.isfile(CONFIG_PATH) or not getattr(sys, "frozen", False):
+        return
+    bundled = os.path.join(getattr(sys, "_MEIPASS", ""), "ai_models_config.json")
+    if os.path.isfile(bundled):
+        shutil.copyfile(bundled, CONFIG_PATH)
+        print(f"Created default config: {CONFIG_PATH}", flush=True)
+
+
+ensure_config_file()
 
 MODEL_ID = os.environ.get("MODEL_ID", "claude")
 SERVER_HOST = os.environ.get("SERVER_HOST", "127.0.0.1")

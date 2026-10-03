@@ -142,7 +142,7 @@ Lần đầu chạy, Chromium mở ra — **đăng nhập** các nền tảng AI
 dist\server.exe --stream
 ```
 
-- Exe đọc `ai_models_config.json` và lưu `browser-profile/` **trong cùng thư mục với exe** — sửa config cạnh exe, không phải trong exe. Muốn dùng lại phiên đăng nhập có sẵn, đặt exe vào thư mục dự án (cạnh `browser-profile/`) hoặc đặt `browser.user_data_dir` thành đường dẫn tuyệt đối.
+- Chỉ cần mỗi file exe: lần chạy đầu exe tự tạo `ai_models_config.json` (config mặc định nhúng sẵn) và `browser-profile/` **trong cùng thư mục với exe** — sửa config cạnh exe, không phải trong exe. Muốn dùng lại phiên đăng nhập có sẵn, đặt exe vào thư mục dự án (cạnh `browser-profile/`) hoặc đặt `browser.user_data_dir` thành đường dẫn tuyệt đối.
 - Cần Google Chrome (`browser.channel: "chrome"`). Bỏ `channel` thì exe tự tải Chromium lần đầu.
 
 Build lại exe sau khi sửa code (cần `pip install pyinstaller`):
