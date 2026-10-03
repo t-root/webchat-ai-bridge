@@ -26,6 +26,13 @@ class Colors:
     BOLD = "\033[1m"
 
 
+# Frozen exe (PyInstaller): read the config next to the .exe so it stays editable.
+if getattr(sys, "frozen", False):
+    APP_DIR = os.path.dirname(os.path.abspath(sys.executable))
+else:
+    APP_DIR = os.path.dirname(os.path.abspath(__file__))
+CONFIG_PATH = os.path.join(APP_DIR, "ai_models_config.json")
+
 MODEL_ID = os.environ.get("MODEL_ID", "claude")
 SERVER_HOST = os.environ.get("SERVER_HOST", "127.0.0.1")
 PORT_EXTENSION = int(os.environ.get("PORT_EXTENSION", "3000"))
@@ -33,6 +40,10 @@ PORT_API = int(os.environ.get("PORT_API", "5000"))
 UPSTREAM_CHAT_COMPLETIONS_URL = os.environ.get("UPSTREAM_CHAT_COMPLETIONS_URL", "").strip()
 UPSTREAM_API_KEY = os.environ.get("UPSTREAM_API_KEY", "").strip()
 UPSTREAM_TIMEOUT = float(os.environ.get("UPSTREAM_TIMEOUT", "60"))
+STREAM_KEEPALIVE_SECONDS = 15
+
+# Real-time streaming (asked at startup). Off → stream requests get one buffered chunk.
+STREAM_ENABLED = False
 
 
 def _parse_wait_seconds(value) -> float | None:
@@ -57,7 +68,7 @@ def load_timeout_settings() -> tuple[float | None, float | None]:
     api_bridge = None
 
     try:
-        config_path = os.path.join(os.path.dirname(__file__), "ai_models_config.json")
+        config_path = CONFIG_PATH
         with open(config_path, "r", encoding="utf-8") as f:
             config = json.load(f)
         timeouts = config.get("timeouts", {})
@@ -89,7 +100,7 @@ def load_api_key() -> str:
     """API key for public OpenAI-compatible endpoints; env API_KEY overrides JSON."""
     default = "trungdeptrai"
     try:
-        config_path = os.path.join(os.path.dirname(__file__), "ai_models_config.json")
+        config_path = CONFIG_PATH
         with open(config_path, "r", encoding="utf-8") as f:
             config = json.load(f)
         client = config.get("client") or {}
@@ -111,6 +122,7 @@ latest_response = None
 # API request tracking
 pending_api_requests = {}  # request_id -> threading.Event
 api_responses = {}         # request_id -> response_text
+stream_queues = {}         # request_id -> Queue of ("chunk" | "done", text)
 
 
 def json_dumps(data) -> str:
@@ -242,6 +254,41 @@ def flatten_chat_message_content(content) -> str:
                 parts.append(item_text)
         return "\n".join(parts)
     return str(content)
+
+
+def clean_bridge_response(text) -> str:
+    """Normalize raw bridge text: strip whitespace and a leading "json" code-block label."""
+    cleaned = sanitize_text(text).strip()
+    if cleaned.lower().startswith('json'):
+        cleaned = cleaned[4:].lstrip()
+    return cleaned
+
+
+def streamed_prefix_end(sent: str, text: str) -> int | None:
+    """Index in `text` right after the content already streamed as `sent`.
+
+    Whitespace is ignored when matching — pages often re-flow spaces / line breaks
+    (e.g. ChatGPT turning a phrase into a link). Returns None if `text` no longer
+    starts with what was sent.
+    """
+    j = 0
+    for ch in sent:
+        if ch.isspace():
+            continue
+        while j < len(text) and text[j].isspace():
+            j += 1
+        if j >= len(text) or text[j] != ch:
+            return None
+        j += 1
+    return j
+
+
+def common_prefix_length(a: str, b: str) -> int:
+    n = min(len(a), len(b))
+    i = 0
+    while i < n and a[i] == b[i]:
+        i += 1
+    return i
 
 
 def build_chat_prompt_from_messages(messages_list) -> str:
@@ -378,7 +425,7 @@ class BridgeHandler(BaseHTTPRequestHandler):
         elif path == "/api/ai/config":
             # Return available models configuration
             try:
-                config_path = os.path.join(os.path.dirname(__file__), "ai_models_config.json")
+                config_path = CONFIG_PATH
                 with open(config_path, "r", encoding="utf-8") as f:
                     config = json.load(f)
                     # Extract just the models info
@@ -444,7 +491,10 @@ class BridgeHandler(BaseHTTPRequestHandler):
                 print(f"✓ [{str(role).upper()}] {content}", flush=True)
 
             request_id = data.get("request_id")
-            if request_id:
+            if request_id and request_id in stream_queues:
+                stream_queues[request_id].put(("done", content))
+                print(f"{Colors.GREEN}✓ [Bridge] Stream finished for {request_id}{Colors.RESET}", flush=True)
+            elif request_id:
                 pending_ids = list(pending_api_requests.keys())
                 print(f"{Colors.CYAN}🔍 [Bridge] Response arrived for {request_id}{Colors.RESET}", flush=True)
                 print(f"{Colors.CYAN}   Pending requests: {pending_ids}{Colors.RESET}", flush=True)
@@ -461,6 +511,14 @@ class BridgeHandler(BaseHTTPRequestHandler):
 
             if data.get("role") == "assistant":
                 latest_response = content
+            return
+
+        elif path == "/api/ai/message-chunk":
+            # Partial reply (full text so far) for a streaming request.
+            write_json(self, 200, {"ok": True})
+            chunks = stream_queues.get(data.get("request_id"))
+            if chunks is not None:
+                chunks.put(("chunk", sanitize_text(data.get("content", ""))))
             return
 
         elif path == "/api/ai/chat-request":
@@ -543,6 +601,7 @@ class APIHandler(BaseHTTPRequestHandler):
                 "model_id": MODEL_ID,
                 "timestamp": datetime.now().isoformat(),
                 "upstream_configured": bool(UPSTREAM_CHAT_COMPLETIONS_URL),
+                "stream_enabled": STREAM_ENABLED,
             })
             return
 
@@ -551,7 +610,7 @@ class APIHandler(BaseHTTPRequestHandler):
                 return
             models_data = []
             try:
-                config_path = os.path.join(os.path.dirname(__file__), "ai_models_config.json")
+                config_path = CONFIG_PATH
                 with open(config_path, "r", encoding="utf-8") as f:
                     cfg = json.load(f)
                 for platform_key, platform_config in cfg.get("models", {}).items():
@@ -595,7 +654,10 @@ class APIHandler(BaseHTTPRequestHandler):
         model = sanitize_text(data.get("model") or MODEL_ID)
 
         if data.get("stream") is True:
-            self._handle_chat_stream(model, messages_list, data)
+            if STREAM_ENABLED and not UPSTREAM_CHAT_COMPLETIONS_URL:
+                self._handle_chat_stream_live(model, messages_list, data)
+            else:
+                self._handle_chat_stream(model, messages_list, data)
             return
 
         response_text = self._generate_assistant_response(messages_list, data)
@@ -606,31 +668,124 @@ class APIHandler(BaseHTTPRequestHandler):
         )
         write_json(self, 200, completion_response)
 
-    def _handle_chat_stream(self, model: str, messages_list, data: dict):
-        """Minimal SSE streaming support."""
-        response_text = self._generate_assistant_response(messages_list, data)
-        request_id = uuid.uuid4().hex
-
+    def _start_sse(self):
         self.send_response(200)
         self.send_header("Content-Type", "text/event-stream; charset=utf-8")
         self.send_header("Cache-Control", "no-cache")
-        self.send_header("Connection", "keep-alive")
+        # No Content-Length on SSE — closing the connection is what marks the end of the body.
+        self.send_header("Connection", "close")
         self.send_header("Access-Control-Allow-Origin", "*")
         self.end_headers()
+        self.wfile.flush()
 
-        chunk = build_chat_completion_chunk(model, response_text, request_id=request_id, final=False)
+    def _write_sse_chunk(self, model: str, content: str, request_id: str, final: bool = False, log: bool = True):
+        chunk = build_chat_completion_chunk(model, content, request_id=request_id, final=final)
         chunk_line = f"data: {json_dumps(chunk)}"
-        print(f"{Colors.GREEN}[API RESPONSE] {chunk_line}{Colors.RESET}", flush=True)
+        if log:
+            print(f"{Colors.GREEN}[API RESPONSE] {chunk_line}{Colors.RESET}", flush=True)
         self.wfile.write(f"{chunk_line}\n\n".encode("utf-8"))
         self.wfile.flush()
 
-        final_chunk = build_chat_completion_chunk(model, "", request_id=request_id, final=True)
-        final_chunk_line = f"data: {json_dumps(final_chunk)}"
-        print(f"{Colors.GREEN}[API RESPONSE] {final_chunk_line}{Colors.RESET}", flush=True)
+    def _finish_sse(self, model: str, request_id: str):
+        self._write_sse_chunk(model, "", request_id, final=True)
         print(f"{Colors.GREEN}[API RESPONSE] data: [DONE]{Colors.RESET}", flush=True)
-        self.wfile.write(f"{final_chunk_line}\n\n".encode("utf-8"))
         self.wfile.write(b"data: [DONE]\n\n")
         self.wfile.flush()
+
+    def _handle_chat_stream(self, model: str, messages_list, data: dict):
+        """Buffered SSE: wait for the full reply, then send it as one chunk."""
+        response_text = self._generate_assistant_response(messages_list, data)
+        request_id = uuid.uuid4().hex
+
+        self._start_sse()
+        self._write_sse_chunk(model, response_text, request_id)
+        self._finish_sse(model, request_id)
+
+    def _handle_chat_stream_live(self, model: str, messages_list, data: dict):
+        """Real-time SSE: forward partial replies from the bridge as they appear in the browser."""
+        prompt_text = build_chat_prompt_from_messages(messages_list)
+        if not prompt_text:
+            self._handle_chat_stream(model, messages_list, data)
+            return
+
+        request_id = str(uuid.uuid4())
+        chunk_id = uuid.uuid4().hex
+        chunks: Queue = Queue()
+        stream_queues[request_id] = chunks
+
+        preferred_model = sanitize_text(data.get("model") or MODEL_ID)
+        print(f"{Colors.YELLOW}📡 [API → Bridge] Streaming request (real-time){Colors.RESET}", flush=True)
+        print(f"{Colors.YELLOW}   Request ID: {request_id}{Colors.RESET}", flush=True)
+        print(f"{Colors.YELLOW}   Context:\n{prompt_text}{Colors.RESET}", flush=True)
+        response_queue.put({
+            "message": prompt_text,
+            "request_id": request_id,
+            "model": preferred_model,
+            "is_api_request": True,
+            "stream": True,
+        })
+
+        sent = ""
+        try:
+            self._start_sse()
+            deadline = None if API_BRIDGE_TIMEOUT is None else time.time() + API_BRIDGE_TIMEOUT
+            final_text = None
+
+            while True:
+                wait = STREAM_KEEPALIVE_SECONDS
+                if deadline is not None:
+                    remaining = deadline - time.time()
+                    if remaining <= 0:
+                        break
+                    wait = min(wait, remaining)
+                try:
+                    kind, content = chunks.get(timeout=wait)
+                except Empty:
+                    # SSE comment keeps proxies / clients from closing an idle connection.
+                    self.wfile.write(b": keep-alive\n\n")
+                    self.wfile.flush()
+                    continue
+
+                if kind == "done":
+                    final_text = clean_bridge_response(content)
+                    break
+
+                raw = sanitize_text(content).strip()
+                if len(raw) <= 4 and "json".startswith(raw.lower()):
+                    continue  # wait until the "json" label decision is stable
+                partial = clean_bridge_response(raw)
+                # Only forward appends; rewritten text is reconciled with the final reply.
+                end = streamed_prefix_end(sent, partial)
+                if end is not None and partial[end:].strip():
+                    delta = partial[end:]
+                    self._write_sse_chunk(model, delta, chunk_id, log=False)
+                    sent += delta
+
+            if final_text is None:
+                wait_label = _format_wait_label(API_BRIDGE_TIMEOUT)
+                print(f"{Colors.YELLOW}⚠ [Bridge] Stream timeout after {wait_label}{Colors.RESET}", flush=True)
+                final_text = sent or f"[Fallback] No model response within {wait_label}"
+
+            end = streamed_prefix_end(sent, final_text)
+            if end is not None:
+                remainder = final_text[end:] if final_text[end:].strip() else ""
+            else:
+                remainder = final_text[common_prefix_length(sent, final_text):]
+                # SSE can't take back text already sent — append the rest on a new paragraph.
+                print(
+                    f"{Colors.YELLOW}⚠ [Stream] Page rewrote text already streamed — "
+                    f"sending the rest from the first difference{Colors.RESET}",
+                    flush=True,
+                )
+                remainder = f"\n\n{remainder}" if remainder else remainder
+            if remainder:
+                self._write_sse_chunk(model, remainder, chunk_id, log=False)
+            print(f"{Colors.GREEN}[API RESPONSE] streamed {len(final_text)} chars{Colors.RESET}", flush=True)
+            self._finish_sse(model, chunk_id)
+        except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
+            print(f"{Colors.YELLOW}⚠ [Stream] Client disconnected ({request_id}){Colors.RESET}", flush=True)
+        finally:
+            stream_queues.pop(request_id, None)
 
     def _generate_assistant_response(self, messages_list, data: dict) -> str:
         """
@@ -688,10 +843,7 @@ class APIHandler(BaseHTTPRequestHandler):
             bridge_response = self._send_to_bridge(prompt_text, request_id, model=preferred_model)
 
             if bridge_response:
-                cleaned = sanitize_text(bridge_response).strip()
-                # Clean up "json\n" prefix if present
-                if cleaned.lower().startswith('json'):
-                    cleaned = cleaned[4:].lstrip()
+                cleaned = clean_bridge_response(bridge_response)
                 print(f"{Colors.GREEN}✓ [Bridge] Received model response{Colors.RESET}", flush=True)
                 return cleaned
 
@@ -760,6 +912,11 @@ def parse_cli_args() -> argparse.Namespace:
         action="store_true",
         help="Hide browser window (headless); skips the interactive prompt",
     )
+    parser.add_argument(
+        "--stream",
+        action="store_true",
+        help="Enable real-time streaming; skips the interactive prompt",
+    )
     return parser.parse_args()
 
 
@@ -771,6 +928,22 @@ def resolve_browser_hidden(*, cli_hidden: bool) -> bool:
     try:
         answer = input(
             "Do you want to hide the browser? Press y to agree, any other key for no: "
+        ).strip().lower()
+    except (EOFError, KeyboardInterrupt):
+        print()
+        raise
+
+    return answer == "y"
+
+
+def resolve_stream_enabled(*, cli_stream: bool) -> bool:
+    """Use --stream when set; otherwise ask once at startup (y = on, n / Enter = off)."""
+    if cli_stream:
+        return True
+
+    try:
+        answer = input(
+            "Enable real-time streaming? Press y to enable, n or Enter for no: "
         ).strip().lower()
     except (EOFError, KeyboardInterrupt):
         print()
@@ -848,8 +1021,12 @@ def run_server(
     port_api: int = PORT_API,
     *,
     hidden: bool = False,
+    stream: bool = False,
 ):
     """Start bridge + API servers and optional Playwright worker."""
+    global STREAM_ENABLED
+    STREAM_ENABLED = stream
+
     bridge_server = ThreadingHTTPServer((SERVER_HOST, port_extension), BridgeHandler)
     api_server = ThreadingHTTPServer((SERVER_HOST, port_api), APIHandler)
 
@@ -876,6 +1053,8 @@ def run_server(
     print(f"{Colors.YELLOW}  ⏱ API→Bridge timeout: {_format_wait_label(API_BRIDGE_TIMEOUT)}{Colors.RESET}", flush=True)
     browser_label = "hidden (headless)" if hidden else "visible"
     print(f"{Colors.YELLOW}  Browser: {browser_label}{Colors.RESET}", flush=True)
+    stream_label = "real-time" if stream else "off (buffered — one chunk when done)"
+    print(f"{Colors.YELLOW}  📶 Stream: {stream_label}{Colors.RESET}", flush=True)
     print(f"{Colors.YELLOW}  🔑 API key: required (Bearer token on /v1/*){Colors.RESET}", flush=True)
     print(f"{Colors.BOLD}{Colors.YELLOW}{'=' * 58}{Colors.RESET}", flush=True)
     print(f"\n{Colors.BOLD}🚀 Server running. Use client_test.py to call the API.{Colors.RESET}\n", flush=True)
@@ -897,7 +1076,21 @@ def run_server(
         sys.exit(0)
 
 
+def force_utf8_output() -> None:
+    """Logs use emoji / Vietnamese — avoid UnicodeEncodeError on cp1252 pipes (frozen exe ignores PYTHONIOENCODING).
+
+    line_buffering: bridge-thread prints don't flush, so piped / redirected logs would lag.
+    """
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding="utf-8", errors="replace", line_buffering=True)
+        except Exception:
+            pass
+
+
 if __name__ == "__main__":
+    force_utf8_output()
     cli_args = parse_cli_args()
     hidden = resolve_browser_hidden(cli_hidden=cli_args.hidden)
-    run_server(hidden=hidden)
+    stream = resolve_stream_enabled(cli_stream=cli_args.stream)
+    run_server(hidden=hidden, stream=stream)

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import time
-from typing import Any
+from typing import Any, Callable
 
 from playwright.sync_api import Locator, Page
 
@@ -20,6 +20,15 @@ def resolve_message_frame(model_config: dict[str, Any]) -> str | None:
     if isinstance(message_frame, str):
         return message_frame.strip() or None
     return None
+
+
+def resolve_stream_frame(model_config: dict[str, Any]) -> str | None:
+    """Selector for the in-progress assistant message; defaults to message_frame."""
+    selectors = model_config.get("selectors") or {}
+    stream_frame = selectors.get("stream_frame")
+    if isinstance(stream_frame, str) and stream_frame.strip():
+        return stream_frame.strip()
+    return resolve_message_frame(model_config)
 
 
 def _page_blocker_hint(page: Page) -> str | None:
@@ -193,7 +202,50 @@ def _read_last_response(page: Page, message_frame: str | None) -> str:
     return ""
 
 
-def send_and_wait_response(page: Page, model_config: dict[str, Any], text: str) -> str:
+def _frame_counts(page: Page, frame: str | None) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for frame_sel in split_selectors(frame):
+        try:
+            counts[frame_sel] = page.locator(frame_sel).count()
+        except Exception:
+            counts[frame_sel] = 0
+    return counts
+
+
+def _read_new_response(page: Page, frame: str | None, baseline_counts: dict[str, int]) -> str:
+    """Like _read_last_response, but only from frames added after baseline_counts was taken.
+
+    Old replies can change after sending (e.g. ChatGPT drops their suggestion chips),
+    so comparing text alone would stream the previous answer.
+    """
+    for frame_sel in split_selectors(frame):
+        turns = page.locator(frame_sel)
+        try:
+            count = turns.count()
+        except Exception:
+            continue
+        if count > baseline_counts.get(frame_sel, 0):
+            try:
+                text = turns.nth(count - 1).inner_text().strip()
+                if text:
+                    return text
+            except Exception:
+                pass
+
+    return ""
+
+
+def send_and_wait_response(
+    page: Page,
+    model_config: dict[str, Any],
+    text: str,
+    on_progress: Callable[[str], None] | None = None,
+) -> str:
+    """Send a prompt and wait for the full reply.
+
+    on_progress (optional) receives the partial reply text each time it changes
+    while the model is still generating — used for real-time streaming.
+    """
     selectors = model_config.get("selectors") or {}
     rs = model_config.get("response_settings") or {}
     stability_ms = rs.get("stability_ms", 800)
@@ -208,6 +260,20 @@ def send_and_wait_response(page: Page, model_config: dict[str, Any], text: str) 
         )
 
     baseline = _read_last_response(page, message_frame)
+    stream_frame = resolve_stream_frame(model_config) if on_progress else None
+    stream_baseline_counts = _frame_counts(page, stream_frame) if stream_frame else {}
+    last_progress = ""
+
+    def report_progress() -> None:
+        nonlocal last_progress
+        partial = _read_new_response(page, stream_frame, stream_baseline_counts)
+        if not partial or partial == last_progress:
+            return
+        last_progress = partial
+        try:
+            on_progress(partial)
+        except Exception as exc:
+            print(f"[Playwright] Stream callback error: {exc}")
 
     fill_prompt(page, selectors, text)
     page.wait_for_timeout(300)
@@ -223,6 +289,8 @@ def send_and_wait_response(page: Page, model_config: dict[str, Any], text: str) 
     while (time.time() * 1000) - started < max_wait_ms:
         now = time.time() * 1000
         generating = _is_generating(page, selectors)
+        if on_progress:
+            report_progress()
 
         if generating:
             saw_generating = True

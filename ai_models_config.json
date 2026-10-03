@@ -10,7 +10,8 @@
         "input": "[aria-label=\"Write your prompt to Claude\"]",
         "send_button": "button[aria-label=\"Send message\"]",
         "stop_button": "button[aria-label*=\"Stop\"]",
-        "message_frame": "[data-is-streaming=\"false\"]"
+        "message_frame": "[data-is-streaming=\"false\"] .font-claude-response",
+        "stream_frame": "[data-is-streaming=\"true\"] .font-claude-response"
       },
       "response_settings": {
         "stability_ms": 800
@@ -26,7 +27,7 @@
         "input": "#prompt-textarea",
         "send_button": "#composer-submit-button",
         "stop_button": "#composer-submit-button[data-testid=\"stop-button\"], button[data-testid=\"stop-button\"]",
-        "message_frame": "[data-message-author-role=\"assistant\"] .markdown"
+        "message_frame": "[data-message-author-role=\"assistant\"] .markdown:not(.markdown .markdown)"
       },
       "response_settings": {
         "stability_ms": 800,
@@ -91,6 +92,56 @@
         "send_button": "button[data-testid=\"submit-button\"]",
         "stop_button": "button[data-testid=\"stop-button\"]",
         "message_frame": "[data-testid=\"message-content\"]"
+      },
+      "response_settings": {
+        "stability_ms": 1000,
+        "streaming_grace_ms": 2500
+      }
+    },
+    "kimi": {
+      "name": "Kimi",
+      "model": "kimi",
+      "aliases": ["moonshot"],
+      "alias_prefixes": ["kimi", "moonshot"],
+      "url": "https://www.kimi.ai",
+      "selectors": {
+        "input": "div.chat-input-editor[contenteditable=\"true\"]",
+        "send_button": "div.send-button-container:not(.disabled)",
+        "stop_button": "div.send-button-container.stop, div.send-button-container.loading",
+        "message_frame": ".segment-assistant .markdown-container:not(.toolcall-flow .markdown-container)"
+      },
+      "response_settings": {
+        "stability_ms": 1000,
+        "streaming_grace_ms": 2500
+      }
+    },
+    "qwen": {
+      "name": "Qwen",
+      "model": "qwen",
+      "alias_prefixes": ["qwen"],
+      "url": "https://chat.qwen.ai",
+      "selectors": {
+        "input": "textarea.message-input-textarea",
+        "send_button": "button.send-button",
+        "stop_button": ".stop-button",
+        "message_frame": ".phase-answer .qwen-markdown, .response-message-content .qwen-markdown"
+      },
+      "response_settings": {
+        "stability_ms": 1000,
+        "streaming_grace_ms": 2500
+      }
+    },
+    "meta": {
+      "name": "Meta AI",
+      "model": "meta",
+      "aliases": ["meta-ai", "llama"],
+      "alias_prefixes": ["llama"],
+      "url": "https://www.meta.ai",
+      "selectors": {
+        "input": "textarea[aria-label=\"Ask Meta AI\"], input[aria-label=\"Ask Meta AI\"], [contenteditable=\"true\"][role=\"textbox\"]",
+        "send_button": "button[aria-label=\"Send\"]",
+        "stop_button": "[data-testid=\"composer-stop-button\"], button[aria-label=\"Stop\"]",
+        "message_frame": "[data-message-author-role=\"assistant\"], div[dir=\"auto\"][class*=\"markdown\"]"
       },
       "response_settings": {
         "stability_ms": 1000,

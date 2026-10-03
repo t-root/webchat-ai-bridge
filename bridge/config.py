@@ -5,10 +5,15 @@ from __future__ import annotations
 import json
 import os
 import random
+import sys
 from functools import lru_cache
 from typing import Any
 
-PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+# Frozen exe (PyInstaller): config + browser profile live next to the .exe, not in the temp unpack dir.
+if getattr(sys, "frozen", False):
+    PROJECT_ROOT = os.path.dirname(os.path.abspath(sys.executable))
+else:
+    PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CONFIG_PATH = os.path.join(PROJECT_ROOT, "ai_models_config.json")
 
 AUTO_MODEL_IDS = frozenset({"auto", "random"})

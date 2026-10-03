@@ -1,6 +1,6 @@
 # WebChat AI Bridge
 
-**Kết nối Claude, ChatGPT, Gemini, DeepSeek, Grok, Copilot với terminal / script qua AI API OpenAI-compatible.**
+**Kết nối Claude, ChatGPT, Gemini, DeepSeek, Grok, Copilot, Kimi, Qwen, Meta AI với terminal / script qua AI API OpenAI-compatible.**
 
 Dự án **100% Python** — server API + Playwright bridge. Playwright tự động gửi prompt lên giao diện web của các nền tảng AI, đọc phản hồi, rồi trả về cho ứng dụng qua endpoint `/v1/chat/completions`.
 
@@ -27,7 +27,7 @@ Dự án **100% Python** — server API + Playwright bridge. Playwright tự đ�
 
 | Tính năng | Mô tả |
 |-----------|--------|
-| **Đa nền tảng** | Claude, ChatGPT, Gemini, DeepSeek, Grok, Copilot (cấu hình qua JSON) |
+| **Đa nền tảng** | Claude, ChatGPT, Gemini, DeepSeek, Grok, Copilot, Kimi, Qwen, Meta AI (cấu hình qua JSON) |
 | **Model `auto`** | Tự chọn ngẫu nhiên một model có sẵn khi gửi `"model": "auto"` |
 | **Tự reload khi timeout** | Hết thời gian chờ → reload trang model → gửi lại prompt từ đầu |
 | **API OpenAI-compatible** | `POST /v1/chat/completions`, `GET /v1/models`, streaming SSE cơ bản |
@@ -119,12 +119,37 @@ python server.py --hidden
 | `python server.py` | Hiện cửa sổ Chrome (mặc định) |
 | `python server.py --hidden` | Ẩn — chạy nền |
 
+Khi khởi động, server hỏi thêm có bật **stream thời gian thực** không:
+
+```
+Enable real-time streaming? Press y to enable, n or Enter for no:
+```
+
+Gõ `y` → bật; `n` hoặc Enter → tắt. Dùng `python server.py --stream` để bật luôn, không hỏi (kết hợp được với `--hidden`). Xem [Stream mode](#stream-mode).
+
 Server tự khởi động Playwright bridge. Khi chạy thành công:
 
 - **Port 3000** — Bridge (giao tiếp với Playwright)
 - **Port 5000** — API OpenAI-compatible
 
 Lần đầu chạy, Chromium mở ra — **đăng nhập** các nền tảng AI cần dùng. Session được lưu trong `browser-profile/`.
+
+### Chạy bằng file exe (Windows, không cần cài Python)
+
+`dist/server.exe` là bản đóng gói sẵn của `server.py` — dùng y như `python server.py` (cùng câu hỏi lúc khởi động, cùng tham số `--hidden` / `--stream`):
+
+```bash
+dist\server.exe --stream
+```
+
+- Exe đọc `ai_models_config.json` và lưu `browser-profile/` **trong cùng thư mục với exe** — sửa config cạnh exe, không phải trong exe. Muốn dùng lại phiên đăng nhập có sẵn, đặt exe vào thư mục dự án (cạnh `browser-profile/`) hoặc đặt `browser.user_data_dir` thành đường dẫn tuyệt đối.
+- Cần Google Chrome (`browser.channel: "chrome"`). Bỏ `channel` thì exe tự tải Chromium lần đầu.
+
+Build lại exe sau khi sửa code (cần `pip install pyinstaller`):
+
+```bash
+powershell -ExecutionPolicy Bypass -File build_exe.ps1
+```
 
 ### 4. Chạy bridge thủ công (tùy chọn)
 
@@ -193,6 +218,9 @@ Endpoint `/health` không yêu cầu key. `/v1/models` và `/v1/chat/completions
 | `deepseek` | DeepSeek |
 | `grok` | Grok |
 | `copilot` | Copilot |
+| `kimi` | Kimi |
+| `qwen` | Qwen |
+| `meta` | Meta AI |
 
 **Model `auto`:**
 
@@ -212,7 +240,22 @@ Bridge chọn ngẫu nhiên một model trong `ai_models_config.json` (Claude, C
 
 ### Stream mode
 
-Gửi `"stream": true` → server trả `text/event-stream` (SSE). Lưu ý: bridge vẫn **chờ web AI trả lời xong** rồi mới gửi toàn bộ nội dung trong một chunk — không stream token-by-token. Chi tiết: [API.md](./API.md).
+Gửi `"stream": true` → server trả `text/event-stream` (SSE). Cách gửi nội dung phụ thuộc lựa chọn lúc khởi động server:
+
+| Stream lúc khởi động | Request `"stream": true` |
+|----------------------|--------------------------|
+| **Bật** (`y` / `--stream`) | Thời gian thực — bridge đọc DOM trong lúc AI đang gõ, gửi phần chữ mới về client ngay |
+| **Tắt** (`n` / Enter) | Chờ web AI trả lời xong rồi gửi toàn bộ trong **một** chunk |
+
+Request không có `"stream": true` luôn nhận JSON thường. `client_test.py` tự dùng stream khi server bật (`/health` → `stream_enabled`).
+
+Lưu ý khi bật:
+
+- Phần đang gõ được đọc qua `selectors.stream_frame` (mặc định = `message_frame`). Claude dùng `[data-is-streaming="true"] .font-claude-response` vì `message_frame` của Claude chỉ khớp khi đã trả lời xong.
+- SSE không thu hồi được chữ đã gửi. Nếu trang **viết lại** đoạn đã stream (ví dụ ẩn phần "thinking"), phần còn lại của câu trả lời cuối được gửi tiếp sau một dòng trống — client có thể thấy thừa đoạn đã bị viết lại.
+- Có upstream proxy (`UPSTREAM_CHAT_COMPLETIONS_URL`) thì vẫn gửi một chunk.
+
+Chi tiết: [API.md](./API.md).
 
 ---
 
@@ -307,6 +350,7 @@ Env override giá trị trong JSON khi được set:
 | `send_button` | Nút gửi |
 | `stop_button` | Nút dừng generate — bridge biết AI còn đang trả lời hay đã xong |
 | `message_frame` | Khung tin assistant — lấy phần tử **cuối cùng** khớp selector, đọc `inner_text()` |
+| `stream_frame` | *(tùy chọn)* Khung tin assistant **đang gõ** — dùng cho stream thời gian thực; mặc định = `message_frame` |
 
 **Alias model (tùy chọn)** — khai báo trong mỗi block `models.*`, không cần sửa code:
 

@@ -10,7 +10,7 @@ import sys
 import threading
 import time
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, Callable
 from urllib.parse import urlparse
 
 import requests
@@ -88,6 +88,19 @@ def _post_message(payload: dict[str, Any]) -> bool:
             f"{SERVER_URL}/api/ai/message",
             json=payload,
             timeout=10,
+        )
+        return res.ok
+    except Exception:
+        return False
+
+
+def _post_chunk(request_id: str, content: str) -> bool:
+    """Send the partial reply (full text so far) for a streaming request."""
+    try:
+        res = requests.post(
+            f"{SERVER_URL}/api/ai/message-chunk",
+            json={"request_id": request_id, "content": content},
+            timeout=5,
         )
         return res.ok
     except Exception:
@@ -383,6 +396,7 @@ def _send_with_retry(
     context: BrowserContext,
     model_config: dict[str, Any],
     message: str,
+    on_progress: Callable[[str], None] | None = None,
 ) -> str:
     retry = get_retry_settings()
     max_attempts = retry["max_attempts"]
@@ -397,7 +411,7 @@ def _send_with_retry(
             else:
                 page = _get_page_for_model(context, model_config)
 
-            response = send_and_wait_response(page, model_config, message)
+            response = send_and_wait_response(page, model_config, message, on_progress)
             if (response or "").strip():
                 return response
             raise TimeoutError("Response timeout (empty result)")
@@ -430,10 +444,12 @@ def _handle_request(context: BrowserContext, input_data: dict[str, Any] | str) -
         message = input_data
         request_id = None
         model_id = None
+        stream = False
     else:
         message = input_data.get("message", "")
         request_id = input_data.get("request_id")
         model_id = input_data.get("model")
+        stream = input_data.get("stream") is True
 
     if not (message or "").strip():
         return
@@ -451,10 +467,18 @@ def _handle_request(context: BrowserContext, input_data: dict[str, Any] | str) -
 
     platform = resolved.get("name") or resolved.get("key")
     auto_label = " (auto)" if is_auto_model(model_id) else ""
-    print(f"[Playwright] Request: model={model_id or 'default'}{auto_label} → {platform}, id={request_id}")
+    stream_label = " (stream)" if stream else ""
+    print(
+        f"[Playwright] Request: model={model_id or 'default'}{auto_label} → {platform}, "
+        f"id={request_id}{stream_label}"
+    )
+
+    on_progress = None
+    if stream and request_id:
+        on_progress = lambda partial: _post_chunk(request_id, partial)
 
     try:
-        response = _send_with_retry(context, resolved, message.strip())
+        response = _send_with_retry(context, resolved, message.strip(), on_progress)
         _post_message({
             "role": "assistant",
             "content": response,

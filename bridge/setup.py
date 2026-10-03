@@ -42,18 +42,29 @@ def _verify_chromium_launch() -> bool:
         return False
 
 
+def _playwright_cli(*args: str) -> tuple[list[str], dict[str, str] | None]:
+    """Command for the Playwright CLI.
+
+    In a frozen exe sys.executable is the exe itself, so `-m playwright` won't work —
+    call the bundled Node driver directly instead.
+    """
+    if getattr(sys, "frozen", False):
+        from playwright._impl._driver import compute_driver_executable, get_driver_env
+
+        return [*compute_driver_executable(), *args], get_driver_env()
+    return [sys.executable, "-m", "playwright", *args], None
+
+
 def install_chromium() -> None:
     """Download Chromium via `python -m playwright install chromium`."""
     print("[Playwright] Chromium chưa có — đang tải tự động (lần đầu có thể mất vài phút)...")
-    cmd = [sys.executable, "-m", "playwright", "install", "chromium"]
-    subprocess.run(cmd, check=True)
+    cmd, env = _playwright_cli("install", "chromium")
+    subprocess.run(cmd, check=True, env=env)
 
     if sys.platform == "linux":
         print("[Playwright] Installing Linux system dependencies...")
-        subprocess.run(
-            [sys.executable, "-m", "playwright", "install-deps", "chromium"],
-            check=False,
-        )
+        cmd, env = _playwright_cli("install-deps", "chromium")
+        subprocess.run(cmd, check=False, env=env)
 
     print("[Playwright] Chromium đã cài xong.")
 

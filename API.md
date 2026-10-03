@@ -32,6 +32,11 @@ Override ports via env: `PORT_API`, `PORT_EXTENSION`.
 | `gpt` | ChatGPT | https://chatgpt.com |
 | `gemini` | Gemini | https://gemini.google.com |
 | `deepseek` | DeepSeek | https://chat.deepseek.com |
+| `grok` | Grok | https://grok.com |
+| `copilot` | Copilot | https://copilot.microsoft.com |
+| `kimi` | Kimi | https://www.kimi.ai |
+| `qwen` | Qwen | https://chat.qwen.ai |
+| `meta` | Meta AI | https://www.meta.ai |
 
 Default model when omitted: `claude` (`MODEL_ID` env).
 
@@ -57,7 +62,8 @@ Host: 127.0.0.1:5000
   "status": "ok",
   "model_id": "claude",
   "timestamp": "2026-06-09T12:00:00.000000",
-  "upstream_configured": false
+  "upstream_configured": false,
+  "stream_enabled": false
 }
 ```
 
@@ -67,6 +73,7 @@ Host: 127.0.0.1:5000
 | `model_id` | string | Default model (`MODEL_ID` env) |
 | `timestamp` | string | ISO 8601 local time |
 | `upstream_configured` | boolean | `true` if `UPSTREAM_CHAT_COMPLETIONS_URL` is set |
+| `stream_enabled` | boolean | `true` if real-time streaming was enabled at startup |
 
 ---
 
@@ -137,7 +144,7 @@ Content-Type: application/json
 |-------|------|----------|-------------|
 | `messages` | array | **yes** | Chat history; last `user` message is sent to the web AI |
 | `model` | string | no | `claude`, `gpt`, `gemini`, `deepseek` (default: `MODEL_ID`) |
-| `stream` | boolean | no | `true` → SSE stream (minimal: one content chunk + `[DONE]`) |
+| `stream` | boolean | no | `true` → SSE stream — real-time if enabled at server startup, otherwise one content chunk + `[DONE]` |
 | `temperature` | number | no | Passed through when upstream proxy is used |
 | `max_tokens` | number | no | Passed through when upstream proxy is used |
 
@@ -197,7 +204,12 @@ data: {"id":"chatcmpl-...","object":"chat.completion.chunk","created":1717939200
 data: [DONE]
 ```
 
-> Stream mode waits for the full web AI response, then emits it in one chunk (not token-by-token).
+Behaviour depends on the choice made when starting `server.py` (prompt `y` / `n` / Enter, or `--stream`):
+
+- **Stream on:** partial text is forwarded while the web AI is still typing — many `delta.content` chunks, then the final `finish_reason: "stop"` chunk and `[DONE]`. While waiting, the server sends `: keep-alive` SSE comments every 15s. If the page rewrites text already streamed, the remainder of the final reply is appended after a blank line.
+- **Stream off** (or upstream proxy configured): waits for the full web AI response, then emits it in one chunk (shown above).
+
+`GET /health` reports the current mode in `stream_enabled`.
 
 **Errors**
 
@@ -336,6 +348,22 @@ Host: 127.0.0.1:3000
 | `input.request_id` | string | Correlates with `/api/ai/message` response |
 | `input.model` | string | Target model / platform |
 | `input.is_api_request` | boolean | `true` when originated from Public API |
+| `input.stream` | boolean | `true` for real-time stream requests — worker posts partial text to `/api/ai/message-chunk` |
+
+---
+
+## POST `/api/ai/message-chunk`
+
+Worker sends the partial reply for a streaming request (only when `input.stream` is `true`). `content` is the **full text so far**, not a delta — the server computes the delta. The final reply still goes to `/api/ai/message`.
+
+```json
+{
+  "request_id": "f47ac10b-58cc-4372-a567-0e02b2c3d479",
+  "content": "The answer"
+}
+```
+
+**Response `200`:** `{"ok": true}`
 
 ---
 

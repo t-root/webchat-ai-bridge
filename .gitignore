@@ -3,3 +3,9 @@ src/node_modules/
 __pycache__/
 *.pyc
 .env 
+# PyInstaller — keep only the built exe + its config in dist/
+build/
+dist/*
+!dist/server.exe
+!dist/ai_models_config.json
+*.spec

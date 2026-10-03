@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import sys
-from typing import Any
+from typing import Any, Iterator
 
 import requests
 
@@ -52,6 +52,43 @@ def call_chat_completions(
     )
     response.raise_for_status()
     return response.json()
+
+
+def stream_chat_completions(
+    messages: list[dict[str, str]],
+    model: str | None = None,
+    temperature: float | None = None,
+) -> Iterator[str]:
+    """Call /v1/chat/completions with stream=true and yield content deltas as they arrive."""
+    cfg = _settings()
+    url = f"{cfg['api_base_url']}/v1/chat/completions"
+    payload: dict[str, Any] = {
+        "messages": messages,
+        "model": model or cfg["default_model"],
+        "stream": True,
+        "temperature": cfg["temperature"] if temperature is None else temperature,
+    }
+
+    with requests.post(
+        url,
+        json=payload,
+        headers=_auth_headers(cfg),
+        timeout=cfg["request_timeout"],
+        stream=True,
+    ) as response:
+        response.raise_for_status()
+        # chunk_size=1: the default (512) would hold small SSE chunks until 512 bytes arrive.
+        for line in response.iter_lines(chunk_size=1, decode_unicode=True):
+            if not line or not line.startswith("data: "):
+                continue  # blank separators and ": keep-alive" comments
+            data = line[len("data: "):]
+            if data == "[DONE]":
+                break
+            chunk = json.loads(data)
+            for choice in chunk.get("choices") or []:
+                content = (choice.get("delta") or {}).get("content")
+                if content:
+                    yield content
 
 
 def health_check() -> dict[str, Any]:
@@ -152,6 +189,8 @@ def main() -> None:
     print("=" * 60)
     print(f"API: {cfg['api_base_url']}")
     print(f"Default model: {cfg['default_model']}")
+    use_stream = bool(health.get("stream_enabled"))
+    print(f"Stream: {'on (real-time)' if use_stream else 'off'}")
     print("\nSelect display mode:")
     print("1. Full API response (JSON + token stats)")
     print("2. Assistant reply only (concise)\n")
@@ -181,8 +220,19 @@ def main() -> None:
 
         try:
             print("\n⏳ Waiting for response...")
-            response = call_chat_completions(messages=conversation, model=selected_model)
-            assistant_message = display_response(response, show_full=show_full)
+            if use_stream:
+                print(f"\n🤖 Assistant ({selected_model}):")
+                parts: list[str] = []
+                for delta in stream_chat_completions(messages=conversation, model=selected_model):
+                    parts.append(delta)
+                    print(delta, end="", flush=True)
+                print()
+                if show_full:
+                    print(f"\n📦 [{len(parts)} stream chunks]")
+                assistant_message = "".join(parts).strip() or None
+            else:
+                response = call_chat_completions(messages=conversation, model=selected_model)
+                assistant_message = display_response(response, show_full=show_full)
             if assistant_message:
                 conversation.append({"role": "assistant", "content": assistant_message})
             print()
