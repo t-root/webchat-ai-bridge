@@ -25,6 +25,7 @@ from .config import (
     load_config,
     pick_random_model,
 )
+from .google_login import ensure_google_login
 from .setup import ensure_chromium_installed
 
 SERVER_URL = os.environ.get("BRIDGE_SERVER_URL", "http://127.0.0.1:3000").rstrip("/")
@@ -203,6 +204,7 @@ def _release_profile_lock(profile_path: str, force_kill: bool = False) -> None:
 
 
 _browser_hidden = False
+_login_ok = False
 
 
 def configure_browser(*, hidden: bool = False) -> None:
@@ -257,6 +259,8 @@ def _launch_browser(pw: Playwright) -> BrowserContext:
             if browser_cfg.get("stealth") is not False:
                 context.add_init_script(_STEALTH_INIT_SCRIPT)
             _warm_up_window(context, browser_cfg)
+            global _login_ok
+            _login_ok = ensure_google_login(context)
             return context
         except Exception as exc:
             last_exc = exc
@@ -323,7 +327,15 @@ def _get_page_for_model(context: BrowserContext, model_config: dict[str, Any]) -
         page = existing
     else:
         print(f"[Playwright] Opening {model_config.get('name')}: {url}")
-        page = context.new_page()
+        # Dùng lại tab trống Chrome tự mở khi khởi động, tránh để lại tab thừa.
+        blank = next(
+            (
+                p for p in context.pages
+                if not p.is_closed() and p.url in ("about:blank", "chrome://newtab/", "")
+            ),
+            None,
+        )
+        page = blank or context.new_page()
         config = load_config()
         timeout = (config.get("browser") or {}).get("page_load_timeout_ms", 60000)
         page.goto(url, wait_until="domcontentloaded", timeout=timeout)
@@ -506,12 +518,17 @@ def _run_bridge_session() -> None:
         context: BrowserContext | None = None
         try:
             context = _ensure_browser(pw, None)
+            if _login_ok:
+                # Đã đăng nhập Google → tắt hẳn trình duyệt, chỉ mở lại khi có request gọi AI.
+                _close_context_safe(context)
+                context = None
+                print("[Playwright] Đã đóng trình duyệt — sẽ mở lại khi có request gọi AI.")
             _browser_ready.set()
             while not _stop_event.is_set():
                 try:
-                    context = _ensure_browser(pw, context)
                     user_input = _fetch_user_input()
                     if user_input:
+                        context = _ensure_browser(pw, context)
                         _handle_request(context, user_input)
                 except Exception as err:
                     print(f"[Playwright] Poll error: {err}")

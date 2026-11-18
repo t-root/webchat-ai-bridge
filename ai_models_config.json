@@ -152,7 +152,7 @@
   "browser": {
     "headless": false,
     "channel": "chrome",
-    "startup_url": "https://github.com/t-root",
+    "startup_url": "",
     "user_data_dir": "browser-profile",
     "page_load_timeout_ms": 60000,
     "wait_for_input_ms": 300000,

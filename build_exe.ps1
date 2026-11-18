@@ -14,6 +14,7 @@ py -3.13 -m PyInstaller --noconfirm --clean --onefile --console `
     --hidden-import bridge.actions `
     --hidden-import bridge.config `
     --hidden-import bridge.setup `
+    --hidden-import bridge.google_login `
     server.py
 if ($LASTEXITCODE -ne 0) { throw "PyInstaller failed ($LASTEXITCODE)" }
 

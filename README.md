@@ -17,6 +17,7 @@ Dự án **100% Python** — server API + Playwright bridge. Playwright tự đ�
 - [Hướng dẫn sử dụng](#hướng-dẫn-sử-dụng)
 - [API Reference](#api-reference) · [API.md đầy đủ](./API.md)
 - [Cấu hình](#cấu-hình)
+- [Đăng nhập Google tự động (`login-gg.txt`)](#đăng-nhập-google-tự-động-login-ggtxt)
 - [Thêm nền tảng AI mới](#thêm-nền-tảng-ai-mới)
 - [Cấu trúc thư mục](#cấu-trúc-thư-mục)
 - [Xử lý sự cố](#xử-lý-sự-cố)
@@ -402,6 +403,39 @@ Ví dụ log khi retry:
 
 ---
 
+## Đăng nhập Google tự động (`login-gg.txt`)
+
+Nhiều trang AI yêu cầu đăng nhập Google. Bridge có thể tự kiểm tra và đăng nhập giúp bạn.
+
+### Tạo file
+
+Tạo file `login-gg.txt` ở thư mục gốc project (cạnh `server.py`, hoặc cạnh `server.exe`), gồm đúng 2 dòng:
+
+```
+account=email_cua_ban@gmail.com
+password=mat_khau_cua_ban
+```
+
+- `account`: nên là email đầy đủ (có `@gmail.com`).
+- Không dùng dấu ngoặc kép, không để khoảng trắng thừa.
+- File đã nằm trong `.gitignore` — không bị commit lên git. Đừng chia sẻ file này.
+
+### Cách hoạt động
+
+1. Khi khởi động, tab đầu tiên của trình duyệt vào trang đăng nhập Google để kiểm tra.
+2. Nếu đã đăng nhập (phiên lưu trong `browser-profile/`) → bỏ qua.
+3. Nếu chưa → tự điền `account` và `password` từ `login-gg.txt`.
+4. Đăng nhập xong, trình duyệt được đóng; khi có API gọi AI, trình duyệt mở lại và vào trang của model.
+5. Chưa điền file hoặc đăng nhập thất bại → chỉ ghi log, bridge vẫn chạy bình thường.
+
+### Lưu ý
+
+- Tài khoản bật **xác minh 2 bước** hoặc gặp **captcha** thì không tự vượt được — bridge chờ tối đa 2 phút để bạn xử lý tay trong cửa sổ trình duyệt.
+- Google đôi khi chặn đăng nhập trên trình duyệt tự động. Nếu gặp, đăng nhập tay một lần; phiên sẽ được lưu cho các lần sau.
+- Bản `server.exe` cần được build lại (`build_exe.ps1`) mới có tính năng này.
+
+---
+
 ## Thêm nền tảng AI mới
 
 1. Mở trang web AI, F12 → copy selector cho **input**, **nút gửi**, **nút stop** (khi AI đang generate), **khung tin assistant** (text/markdown).
@@ -447,7 +481,9 @@ webchat-ai-bridge/
 ├── bridge/
 │   ├── worker.py           # Poll bridge, quản lý browser
 │   ├── actions.py          # fill, click, đọc message_frame
+│   ├── google_login.py     # Kiểm tra / tự đăng nhập Google
 │   └── config.py           # Load config, list_models, get_client_settings
+├── login-gg.txt            # account= / password= (tự tạo, không commit)
 ├── client_test.py          # Client mẫu — load config từ JSON
 ├── start_chrome.ps1        # Mở Chrome + profile (Windows)
 ├── browser-profile/        # Session Chromium (tự tạo)

@@ -8,3 +8,6 @@ build/
 dist/*
 !dist/server.exe
 *.spec
+
+# Google credentials
+login-gg.txt
