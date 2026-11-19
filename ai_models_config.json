@@ -7,11 +7,11 @@
       "alias_prefixes": ["claude"],
       "url": "https://claude.ai",
       "selectors": {
-        "input": "[aria-label=\"Write your prompt to Claude\"]",
-        "send_button": "button[aria-label=\"Send message\"]",
-        "stop_button": "button[aria-label*=\"Stop\"]",
-        "message_frame": "[data-is-streaming=\"false\"] .font-claude-response",
-        "stream_frame": "[data-is-streaming=\"true\"] .font-claude-response"
+        "input": "[data-testid=\"chat-input\"], [aria-label=\"Write your prompt to Claude\"]",
+        "send_button": "button[data-testid=\"chat-input-send\"], button[aria-label=\"Send message\"]",
+        "stop_button": "button[data-testid=\"chat-input-stop\"], button[aria-label*=\"Stop\"]",
+        "message_frame": "[data-testid=\"assistant-message\"] .standard-markdown, [data-is-streaming=\"false\"] .font-claude-response",
+        "stream_frame": "[data-testid=\"assistant-message\"][data-is-streaming=\"true\"] .standard-markdown, [data-is-streaming=\"true\"] .font-claude-response"
       },
       "response_settings": {
         "stability_ms": 800
@@ -24,10 +24,10 @@
       "alias_prefixes": ["gpt-"],
       "url": "https://chatgpt.com",
       "selectors": {
-        "input": "#prompt-textarea",
-        "send_button": "#composer-submit-button",
-        "stop_button": "#composer-submit-button[data-testid=\"stop-button\"], button[data-testid=\"stop-button\"]",
-        "message_frame": "[data-message-author-role=\"assistant\"] .markdown:not(.markdown .markdown)"
+        "input": "#prompt-textarea, div.ProseMirror[contenteditable=\"true\"]",
+        "send_button": "#composer-submit-button, button[type=\"submit\"]:has(path[d^=\"M9.33467 16.6663\"]), button[type=\"submit\"][class*=\"size-token-button-composer\"]",
+        "stop_button": "button[data-testid=\"stop-button\"], button:has(path[d^=\"M4.5 5.75\"]), button[aria-label=\"Stop\"]",
+        "message_frame": "[data-markdown-text-style=\"assistant-message\"], [data-message-author-role=\"assistant\"] .markdown:not(.markdown .markdown)"
       },
       "response_settings": {
         "stability_ms": 800,
@@ -138,10 +138,10 @@
       "alias_prefixes": ["llama"],
       "url": "https://www.meta.ai",
       "selectors": {
-        "input": "textarea[aria-label=\"Ask Meta AI\"], input[aria-label=\"Ask Meta AI\"], [contenteditable=\"true\"][role=\"textbox\"]",
-        "send_button": "button[aria-label=\"Send\"]",
+        "input": "input[aria-label*=\"Meta AI\"], textarea[aria-label*=\"Meta AI\"], [contenteditable=\"true\"][role=\"textbox\"]",
+        "send_button": "button[aria-label=\"Send\"], button[aria-label=\"Gửi\"]",
         "stop_button": "[data-testid=\"composer-stop-button\"], button[aria-label=\"Stop\"]",
-        "message_frame": "[data-message-author-role=\"assistant\"], div[dir=\"auto\"][class*=\"markdown\"]"
+        "message_frame": "div.ur-markdown, [data-message-author-role=\"assistant\"], div[dir=\"auto\"][class*=\"markdown\"]"
       },
       "response_settings": {
         "stability_ms": 1000,

@@ -74,6 +74,17 @@ def _login(page: Page, account: str, password: str) -> bool:
         return False
 
 
+def _park_tab(page: Page) -> None:
+    """Đăng nhập xong thì đưa tab về trang trống, không để lại trang Google.
+
+    worker._get_page_for_model tái sử dụng tab about:blank cho AI đầu tiên được gọi.
+    """
+    try:
+        page.goto("about:blank")
+    except Exception:
+        pass
+
+
 def ensure_google_login(context: BrowserContext) -> bool:
     """Trả về True nếu đã đăng nhập. Không bao giờ ném lỗi — đây chỉ là bước phụ trợ."""
     page: Page | None = None
@@ -82,6 +93,7 @@ def ensure_google_login(context: BrowserContext) -> bool:
         page = context.pages[0] if context.pages else context.new_page()
         if _is_logged_in(page):
             print("[Google] Đã đăng nhập Google — bỏ qua.")
+            _park_tab(page)
             return True
 
         creds = _read_credentials()
@@ -92,6 +104,7 @@ def ensure_google_login(context: BrowserContext) -> bool:
         print("[Google] Chưa đăng nhập — đang đăng nhập từ login-gg.txt...")
         if _login(page, *creds):
             print("[Google] Đăng nhập Google thành công.")
+            _park_tab(page)
             return True
         else:
             print(

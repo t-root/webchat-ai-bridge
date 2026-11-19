@@ -108,6 +108,23 @@ def _post_chunk(request_id: str, content: str) -> bool:
         return False
 
 
+class BrowserContextLost(Exception):
+    """Chrome do Playwright mở đã chết/treo (không tạo được tab) — cần mở lại trình duyệt."""
+
+
+def _is_context_lost_error(exc: Exception) -> bool:
+    msg = str(exc).lower()
+    markers = (
+        "failed to open a new tab",
+        "target.createtarget",
+        "target page, context or browser has been closed",
+        "browser has been closed",
+        "browser has disconnected",
+        "connection closed",
+    )
+    return any(m in msg for m in markers)
+
+
 def _is_launch_retryable(exc: Exception) -> bool:
     msg = str(exc).lower()
     markers = (
@@ -335,11 +352,16 @@ def _get_page_for_model(context: BrowserContext, model_config: dict[str, Any]) -
             ),
             None,
         )
-        page = blank or context.new_page()
-        config = load_config()
-        timeout = (config.get("browser") or {}).get("page_load_timeout_ms", 60000)
-        page.goto(url, wait_until="domcontentloaded", timeout=timeout)
-        page.bring_to_front()
+        try:
+            page = blank or context.new_page()
+            config = load_config()
+            timeout = (config.get("browser") or {}).get("page_load_timeout_ms", 60000)
+            page.goto(url, wait_until="domcontentloaded", timeout=timeout)
+            page.bring_to_front()
+        except Exception as exc:
+            if _is_context_lost_error(exc):
+                raise BrowserContextLost(str(exc)) from exc
+            raise
 
     _pages[key] = page
     config = load_config()
@@ -427,6 +449,8 @@ def _send_with_retry(
             if (response or "").strip():
                 return response
             raise TimeoutError("Response timeout (empty result)")
+        except BrowserContextLost:
+            raise
         except TimeoutError as err:
             last_err = err
             if attempt < max_attempts and reload_on_failure:
@@ -451,7 +475,11 @@ def _send_with_retry(
     raise TimeoutError("Response timeout")
 
 
-def _handle_request(context: BrowserContext, input_data: dict[str, Any] | str) -> None:
+def _handle_request(
+    context: BrowserContext,
+    input_data: dict[str, Any] | str,
+    allow_context_lost: bool = True,
+) -> None:
     if isinstance(input_data, str):
         message = input_data
         request_id = None
@@ -498,6 +526,20 @@ def _handle_request(context: BrowserContext, input_data: dict[str, Any] | str) -
             "timestamp": datetime.now(timezone.utc).isoformat(),
         })
         print(f"[Playwright] Response sent ({len(response)} chars)")
+    except BrowserContextLost:
+        if allow_context_lost:
+            raise  # vòng lặp chính sẽ mở lại Chrome rồi xử lý lại request này
+        err = RuntimeError(
+            "Chrome do bridge mở đã bị đóng/treo và không mở lại được. "
+            "Hãy đóng hết cửa sổ Chrome của bridge rồi chạy lại server.py."
+        )
+        print(f"[Playwright] Error: {err}")
+        _post_message({
+            "role": "assistant",
+            "content": f"Error: {err}",
+            "request_id": request_id,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+        })
     except Exception as err:
         print(f"[Playwright] Error: {err}")
         _post_message({
@@ -529,7 +571,13 @@ def _run_bridge_session() -> None:
                     user_input = _fetch_user_input()
                     if user_input:
                         context = _ensure_browser(pw, context)
-                        _handle_request(context, user_input)
+                        try:
+                            _handle_request(context, user_input)
+                        except BrowserContextLost as lost:
+                            print(f"[Playwright] Chrome đã chết ({lost}) — mở lại trình duyệt...")
+                            _close_context_safe(context)
+                            context = _ensure_browser(pw, None)
+                            _handle_request(context, user_input, allow_context_lost=False)
                 except Exception as err:
                     print(f"[Playwright] Poll error: {err}")
                     if not _context_is_alive(context):
