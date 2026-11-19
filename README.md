@@ -137,10 +137,10 @@ Lần đầu chạy, Chromium mở ra — **đăng nhập** các nền tảng AI
 
 ### Chạy bằng file exe (Windows, không cần cài Python)
 
-`dist/server.exe` là bản đóng gói sẵn của `server.py` — dùng y như `python server.py` (cùng câu hỏi lúc khởi động, cùng tham số `--hidden` / `--stream`):
+`dist/webchat-ai-bridge.exe` là bản đóng gói sẵn của `server.py` — dùng y như `python server.py` (cùng câu hỏi lúc khởi động, cùng tham số `--hidden` / `--stream`):
 
 ```bash
-dist\server.exe --stream
+dist\webchat-ai-bridge.exe --stream
 ```
 
 - Chỉ cần mỗi file exe: lần chạy đầu exe tự tạo `ai_models_config.json` (config mặc định nhúng sẵn) và `browser-profile/` **trong cùng thư mục với exe** — sửa config cạnh exe, không phải trong exe. Muốn dùng lại phiên đăng nhập có sẵn, đặt exe vào thư mục dự án (cạnh `browser-profile/`) hoặc đặt `browser.user_data_dir` thành đường dẫn tuyệt đối.
@@ -409,7 +409,7 @@ Nhiều trang AI yêu cầu đăng nhập Google. Bridge có thể tự kiểm t
 
 ### Tạo file
 
-Tạo file `login-gg.txt` ở thư mục gốc project (cạnh `server.py`, hoặc cạnh `server.exe`), gồm đúng 2 dòng:
+Tạo file `login-gg.txt` ở thư mục gốc project (cạnh `server.py`, hoặc cạnh `webchat-ai-bridge.exe`), gồm đúng 2 dòng:
 
 ```
 account=email_cua_ban@gmail.com
@@ -432,7 +432,7 @@ password=mat_khau_cua_ban
 
 - Tài khoản bật **xác minh 2 bước** hoặc gặp **captcha** thì không tự vượt được — bridge chờ tối đa 2 phút để bạn xử lý tay trong cửa sổ trình duyệt.
 - Google đôi khi chặn đăng nhập trên trình duyệt tự động. Nếu gặp, đăng nhập tay một lần; phiên sẽ được lưu cho các lần sau.
-- Bản `server.exe` cần được build lại (`build_exe.ps1`) mới có tính năng này.
+- Bản `webchat-ai-bridge.exe` cần được build lại (`build_exe.ps1`) mới có tính năng này.
 
 ---
 
